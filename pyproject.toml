@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "t-dig"
+version = "1.0.0"
+description = "T-DIG: Text-conditioned Diversity for Image Generation"
+readme = "README.md"
+license = {text = "Apache-2.0"}
+requires-python = ">=3.10"
+# The core packages need only the standard library to import. Each stage runs in one of three
+# environments with its own pinned stack; install those from requirements/ (README, Setup).
+dependencies = []
+
+[project.optional-dependencies]
+data = ["numpy", "pyarrow", "Pillow"]
+elicitation = ["openai>=1.99,<3", "Pillow>=10,<13"]
+api = ["litellm>=1.72.1,<2"]
+cluster = ["numpy>=1.24,<3", "scikit-learn>=1.2,<2", "sentence-transformers>=3,<6"]
+test = ["pytest", "numpy", "pyarrow", "Pillow", "scikit-learn"]
+
+[project.scripts]
+hpdv2 = "hpdv2.cli:main"
+iid = "iid.cli:main"
+
+[tool.setuptools]
+packages = [
+    "axis_grpo", "axis_grpo.training",
+    "tdig", "tdig.scorers",
+    "baselines", "benchmarks", "iid", "elicitation", "hpdv2",
+    "axis_framework", "axis_framework.servers", "axis_framework.backend",
+]
+
+[tool.setuptools.package-data]
+benchmarks = ["sources.lock.json"]
+"axis_grpo.training" = ["runtime.lock.json", "THIRD_PARTY.md", "third_party/verl-LICENSE"]
+axis_framework = ["t2i_models.json", "served_runs/*.json", "web/*.html", "relay/*", "scripts/*.sh",
+                  "vendor/README.md", "vendor/qwen_vl_utils/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

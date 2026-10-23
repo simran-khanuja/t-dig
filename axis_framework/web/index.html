@@ -1,0 +1,2113 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>axis diversity</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600&family=Inter:wght@400;500;600;700&display=swap">
+<!--
+  One screen per state of the loop (session.py). The orchestrator serves this file at / and
+  reads it from disk on every request (route_index), so a page reload picks up edits.
+
+  Plain JS, no build step. Blinding and event timestamps live on the server: the arm and the
+  audit metrics never reach the client (orchestrator._public), so there is no arm-specific
+  code here.
+
+  Design rules:
+  1. One question per screen, asked in the h2.
+  2. Colour has one meaning: green = finish/accept (ends the loop), orange = spends GPU time,
+     outline/ghost = everything else.
+  3. A button says what happens to the images on screen: stacked buttons name the
+     consequence on the second line and quote the axis in the box.
+  4. Decisions (accept/reject) and refinements (generate/edit) are on different cards.
+  5. Explanations live inside the control they explain.
+  6. Every wait is narrated: status bar with an elapsed counter.
+  7. The first screen asks for a prompt; the pre-rendered gallery comes below it.
+
+  No T2I model picker: the model is the run's (`--model` on the orchestrator).
+
+  Suggestions are pushed: the server starts the VLM once a set of images exists
+  (orchestrator._start_suggest). The page polls while `suggest_pending` and repaints only
+  the chip row, so typed text is kept.
+-->
+<style>
+  /* Light tokens on :root, overridden for dark mode below. */
+  :root {
+    color-scheme: light dark;
+    --bg:#faf5ee; --surface:#fffdfa; --sunk:#f2e8db; --raise:#fff;
+    --fg:#2a1e15; --mut:#8a7360; --faint:#a89583; --line:#e8dccb;
+    --acc:#b8552a; --acc-fg:#fff8f2; --acc-soft:#f8e6d8; --acc-line:#e3b394;
+    --ok:#4c7a4f; --ok-fg:#f6fbf5; --ok-soft:#e6f0e3; --ok-line:#a9c7a6;
+    --warn:#96590f; --warn-bg:#fcf0dc; --err:#a3301f;
+    --sel:#c2762e;
+    --edit:#2f6c9e; --edit-fg:#f4f9fd; --edit-soft:#e3eef7;
+    --regen:#9c6b1f; --regen-fg:#fffaf1;
+    --sh-sm: 0 1px 2px rgba(90,60,30,.05);
+    --sh: 0 1px 2px rgba(90,60,30,.05), 0 8px 22px rgba(90,60,30,.07);
+    --sh-in: inset 0 1px 3px rgba(90,60,30,.07);
+    /* Fraunces for headings, Inter for body. Each stack ends in a local face, since the
+       browser may have no route to Google Fonts (e.g. over an SSH tunnel). */
+    --ui:'Inter',ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+    --display:'Fraunces','Iowan Old Style','Palatino Linotype',Georgia,serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg:#141009; --surface:#1e1811; --sunk:#2a2119; --raise:#251d15;
+      --fg:#f2e7d9; --mut:#a89684; --faint:#8a7967; --line:#3a2d22;
+      --acc:#e0854a; --acc-fg:#1b1109; --acc-soft:#3a2617; --acc-line:#6b4527;
+      --ok:#7fb583; --ok-fg:#0f1d0e; --ok-soft:#1d2b1b; --ok-line:#3d5a3c;
+      --warn:#e0a55e; --warn-bg:#33240f; --err:#f08b78;
+      --sel:#e8a05c;
+      --edit:#6fa8d8; --edit-fg:#0c1722; --edit-soft:#172633;
+      --regen:#d9a65a; --regen-fg:#1b1109;
+      --sh-sm: 0 1px 2px rgba(0,0,0,.3);
+      --sh: 0 1px 2px rgba(0,0,0,.3), 0 8px 22px rgba(0,0,0,.28);
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font-family:var(--ui); font-size:15px; line-height:1.6;
+         -webkit-font-smoothing:antialiased; }
+  /* Full width, used by `.cols` (pictures left, controls right) so a screen fits without
+     scrolling. Prose stays capped at 62ch (.lede). */
+  main { max-width: none; margin: 0 auto; padding: 16px 24px 48px; }
+
+  /* Two columns from 1080px; stacked below. */
+  .cols { display:grid; gap:13px; align-items:start; }
+  @media (min-width: 1080px) {
+    .cols { grid-template-columns:minmax(0,1fr) minmax(0,1fr); }
+    .cols.left-heavy { grid-template-columns:minmax(0,1.15fr) minmax(0,.85fr); }
+  }
+
+  /* ---------------------------------------------------------------- masthead + steps */
+  .top { display:flex; gap:16px; align-items:baseline; justify-content:space-between;
+         flex-wrap:wrap; margin-bottom:11px; }
+  h1 { font-family:var(--display); font-size:20px; font-weight:400; letter-spacing:0;
+       text-transform:none; margin:0; color:var(--fg); }
+  h1 em { font-style:italic; color:var(--acc); }
+  /* Progress indicator: the loop's states as labelled stops. */
+  .steps { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+  .step { font-size:11.5px; letter-spacing:.03em; padding:4px 10px; border-radius:99px;
+          color:var(--faint); background:var(--sunk); white-space:nowrap; }
+  .step.done { color:var(--mut); background:var(--acc-soft); }
+  .step.now { color:var(--acc-fg); background:var(--acc); font-weight:650; }
+
+  /* Serif headings, sans body. */
+  h2 { font-family:var(--display); font-size:23px; font-weight:600; margin:0 0 4px;
+       letter-spacing:0; line-height:1.25; font-optical-sizing:auto; }
+  h2 em { font-style:italic; color:var(--acc); font-weight:400; }
+  h3 { font-size:11px; font-weight:700; letter-spacing:.09em; text-transform:uppercase;
+       color:var(--faint); margin:0 0 10px; }
+  .lede { color:var(--mut); font-size:13px; margin:0 0 12px; max-width:62ch; }
+  /* Panel kinds, told apart by depth:
+       .card         raised: the question being asked, one per screen.
+       .card.canvas  recessed: pictures.
+       .card.final   green tint: ending the loop.
+       .card.quiet   dashed: asides.
+     `.settings` nests inside the panel whose action it modifies. */
+  .card { background:var(--surface); border:1px solid var(--line); border-radius:14px;
+          padding:17px 18px; margin-bottom:13px; box-shadow:var(--sh); }
+  .card.quiet { background:transparent; box-shadow:none; border-style:dashed; }
+  .card.canvas { background:var(--sunk); border-color:transparent;
+                 box-shadow:var(--sh-in); }
+  .card.final { background:var(--ok-soft); border-color:var(--ok-line);
+                box-shadow:var(--sh-sm); }
+  /* Small label above a panel's heading saying what the panel is. */
+  .eyebrow { font-size:10.5px; font-weight:700; letter-spacing:.11em;
+             text-transform:uppercase; color:var(--faint); margin:0 0 7px; }
+  .card.final .eyebrow { color:var(--ok); }
+  .eyebrow em { font-style:normal; color:var(--acc); }
+  .card:not(.quiet):not(.canvas):not(.final) > .eyebrow { color:var(--acc); }
+  /* Caps the width of prose and single inputs; grids and the gallery stay full width. */
+  .narrow { max-width:820px; }
+
+  /* ---------------------------------------------------------------- image grids */
+  .grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:9px; }
+  .grid.k8, .grid.k16 { grid-template-columns:repeat(auto-fit, minmax(115px, 1fr)); }
+  .grid img { width:100%; border-radius:11px; display:block; background:var(--sunk);
+              aspect-ratio:1; object-fit:cover; }
+  /* The policy's prompt is never truncated: capped in height and scrollable at rest, shown
+     in full on hover or focus, and in the `title` tooltip. */
+  .cap { font-size:12px; line-height:1.5; color:var(--mut); margin-top:6px;
+         white-space:pre-wrap; overflow-wrap:anywhere;
+         max-height:11em; overflow-y:auto; padding:6px 7px; border-radius:9px;
+         background:var(--cap-bg, rgba(0,0,0,.03));
+         transition:max-height .15s ease, background .15s ease; }
+  .pick:hover .cap, .pick:focus-within .cap, .pick:focus .cap {
+         max-height:none; background:var(--acc-soft); color:var(--fg, inherit); }
+  /* Selection is a button so it is keyboard-reachable. */
+  .pick { display:block; width:100%; padding:3px; border:2px solid transparent;
+          background:none; border-radius:14px; cursor:pointer; text-align:left; }
+  .pick:focus-visible { outline:2px solid var(--acc); outline-offset:2px; }
+  .pick[aria-pressed="true"] { border-color:var(--sel); background:var(--acc-soft); }
+  .pick .tick { position:relative; height:0; }
+  .tile { display:flex; flex-direction:column; gap:5px; min-width:0; }
+  .tile .acts { display:flex; gap:6px; justify-content:center; flex-wrap:wrap; }
+  .fixbox { margin-top:12px; padding:12px 14px; border:1px solid var(--line); border-radius:11px;
+            background:var(--sunk); }
+  .fixbox label { font-size:13px; font-weight:600; }
+  .fixrow { display:flex; gap:8px; margin-top:8px; flex-wrap:wrap; }
+  .fixrow input { flex:1 1 220px; min-width:0; }
+  .pick .tick span { position:absolute; top:9px; right:9px; width:23px; height:23px;
+       border-radius:50%; background:var(--sel); color:#fff; font-size:13px; line-height:23px;
+       text-align:center; display:none; box-shadow:var(--sh-sm); }
+  .pick[aria-pressed="true"] .tick span { display:block; }
+  /* An empty tick circle on unticked pictures shows they can be ticked. */
+  .pick[aria-pressed="false"] .tick span { display:block; background:rgba(255,255,255,.85); color:transparent;
+                                           border:2px solid var(--line); }
+  .selbar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:12px 0 0;
+            padding:10px 12px; border:1px solid var(--sel); border-radius:11px; background:var(--acc-soft); }
+  .selbar-t { font-size:13px; }
+
+  /* ---------------------------------------------------------------- inputs */
+  input[type=text] { width:100%; padding:10px 13px; border-radius:10px;
+                     border:1px solid var(--line); background:var(--bg); color:var(--fg);
+                     font:inherit; }
+  input[type=text].big { font-size:15.5px; padding:12px 15px; }
+  input[type=text]:focus { outline:2px solid var(--acc); outline-offset:-1px;
+                           border-color:var(--acc); }
+  input[type=range] { width:100%; accent-color:var(--acc); }
+  /* Custom track for the diversity slider: the fill (--fill) runs from the left edge to
+     the thumb, so the first stop reads as "some", not "off". */
+  #oa { -webkit-appearance:none; appearance:none; height:22px; background:transparent; margin:0; }
+  #oa::-webkit-slider-runnable-track { height:8px; border-radius:4px;
+    background:linear-gradient(to right, var(--acc) 0, var(--acc) var(--fill, 0px), var(--line) var(--fill, 0px), var(--line) 100%); }
+  #oa::-moz-range-track { height:8px; border-radius:4px; background:var(--line); }
+  #oa::-moz-range-progress { height:8px; border-radius:4px; background:var(--acc); }
+  #oa::-webkit-slider-thumb { -webkit-appearance:none; width:20px; height:20px; border-radius:50%;
+    background:var(--acc); border:2px solid #fff; box-shadow:0 0 0 1px var(--line); margin-top:-6px; cursor:pointer; }
+  #oa::-moz-range-thumb { width:18px; height:18px; border-radius:50%; background:var(--acc); border:2px solid #fff; cursor:pointer; }
+  .field { margin-bottom:13px; }
+  .field > label { display:block; font-size:12px; font-weight:600; color:var(--mut);
+                   margin-bottom:6px; }
+
+  /* ---------------------------------------------------------------- buttons */
+  .btn { font:inherit; font-size:13.5px; padding:8px 14px; border-radius:9px;
+         border:1px solid var(--line); background:var(--surface); color:var(--fg);
+         cursor:pointer; font-weight:500;
+         transition:border-color .12s, background .12s, transform .06s; }
+  .btn:hover:not(:disabled) { border-color:var(--acc); background:var(--acc-soft); }
+  .btn:active:not(:disabled) { transform:translateY(1px); }
+  .btn:disabled { opacity:.4; cursor:default; }
+  /* Rule 2: orange spends GPU time; green ends the loop. Nothing else is filled. */
+  .btn.gen { background:var(--acc); color:var(--acc-fg); border-color:var(--acc);
+             font-weight:650; }
+  .btn.gen:hover:not(:disabled) { filter:brightness(1.08); background:var(--acc); }
+  .btn.done { background:var(--ok); color:var(--ok-fg); border-color:var(--ok);
+              font-weight:650; }
+  .btn.done:hover:not(:disabled) { filter:brightness(1.08); background:var(--ok);
+                                   border-color:var(--ok); }
+  /* Verdict block: heading, hint, comment box, then the two buttons (box first, so it is
+     seen before the click). */
+  .finish { margin-top:20px; padding-top:18px; border-top:1px solid var(--line);
+            display:flex; flex-direction:column; gap:8px; }
+  .finish h3 { margin:0; }
+  /* Study mode: the two required 1-5 scales, the consent page, the questionnaire. */
+  .scale { display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin:6px 0 12px; }
+  .scale .btn { min-width:40px; }
+  .scale .ends { font-size:12px; color:var(--muted, #666); }
+  .study-doc h3 { margin:22px 0 6px; font-size:15px; }
+  .study-doc h3.warn { color:#a3261a; }
+  .study-doc table.ex { border-collapse:collapse; margin:8px 0 12px; font-size:14px; }
+  .study-doc table.ex td, .study-doc table.ex th { border:1px solid var(--line); padding:6px 10px; text-align:left; vertical-align:top; }
+  .study-doc .todo { background:#fff3c4; padding:1px 4px; }
+  .study-doc li { margin:3px 0; }
+  .qn label.q { display:block; font-weight:600; margin:18px 0 4px; }
+  .qn textarea, .qn select { width:100%; box-sizing:border-box; font:inherit; font-size:14px; padding:8px; }
+  .code { font:600 22px/1.2 ui-monospace,Menlo,monospace; letter-spacing:.08em; padding:12px 16px;
+          border:2px dashed var(--line); display:inline-block; margin:8px 0; user-select:all; }
+  /* Question headings on the review page; the global h3 is a small uppercase label. */
+  h3.q { font:600 19px/1.3 var(--display); text-transform:none; letter-spacing:0;
+         color:var(--fg); margin:0 0 6px; text-wrap:balance; }
+  .finish .hint { margin:0; }
+  .finish label { font-size:13px; font-weight:600; margin-top:4px; }
+  .finish textarea { width:100%; box-sizing:border-box; font:inherit; font-size:14px;
+                     padding:9px 11px; border-radius:10px; border:1px solid var(--line);
+                     background:var(--surface); color:var(--fg); resize:vertical; }
+  .finish textarea:focus-visible { outline:2px solid var(--acc); outline-offset:1px; }
+  .finish .row { margin-top:4px; }
+  /* Inline confirmation popover under a text box (used instead of confirm()). */
+  .chipask:empty { display:none; }
+  .chipask { margin:8px 0 0; display:flex; flex-wrap:wrap; align-items:center; gap:8px 12px;
+             padding:10px 12px; border:1px solid var(--warn); border-radius:11px;
+             background:var(--warn-bg); color:var(--fg); font-size:13px;
+             box-shadow:var(--sh-sm); }
+  .ask-t { flex:1 1 200px; }
+  .ask-t b { font-weight:600; }
+  .ask-b { display:flex; gap:8px; flex-wrap:wrap; }
+  .oa-head { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; }
+  .oa-head h3 { margin:0; }
+  .seedchip { font-variant-numeric: tabular-nums; }
+  .promptline { margin:0 0 14px; }
+  .pl-view { display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; }
+  .pl-view .pl-text { margin:0; flex:1 1 220px; }
+  .pl-btns { display:flex; gap:10px; flex-wrap:wrap; }
+  /* Change prompt / Change seed buttons, with an instant data-tip tooltip on hover and
+     keyboard focus (title= is slow and absent on touch). */
+  .pl-action { position:relative; font:600 14px/1.2 var(--ui); padding:9px 14px; border-radius:10px;
+    border:1.5px solid var(--acc-line); background:var(--acc-soft); color:var(--fg); cursor:pointer;
+    display:inline-flex; align-items:center; gap:8px; white-space:nowrap; }
+  .pl-action:hover, .pl-action:focus-visible { border-color:var(--acc); outline:none;
+    box-shadow:0 0 0 3px color-mix(in srgb, var(--acc) 18%, transparent); }
+  .pl-action.seed { border-color:var(--edit); background:var(--edit-soft); }
+  .pl-action.seed:hover, .pl-action.seed:focus-visible { border-color:var(--edit);
+    box-shadow:0 0 0 3px color-mix(in srgb, var(--edit) 20%, transparent); }
+  .pl-action .seedno { font-weight:500; font-size:12px; color:var(--mut); font-variant-numeric:tabular-nums;
+    padding:2px 7px; border-radius:6px; background:var(--surface); border:1px solid var(--line); }
+  .pl-action[data-tip]:hover::after, .pl-action[data-tip]:focus-visible::after {
+    content:attr(data-tip); position:absolute; z-index:20; top:calc(100% + 8px); right:0;
+    width:max-content; max-width:min(300px, 80vw); white-space:normal; text-align:left;
+    font:400 13px/1.45 var(--ui); color:var(--fg); background:var(--raise);
+    border:1px solid var(--line); border-radius:10px; padding:10px 12px; box-shadow:var(--sh); }
+  .pl-note { margin:6px 0 0; color: var(--ok, #2f7d4f); }
+  .btn.tiny { padding:4px 11px; font-size:12.5px; border-radius:8px; }
+  .linkbtn { background:none; border:0; padding:0; font:inherit; color:var(--acc);
+             text-decoration:underline; cursor:pointer; }
+  .linkbtn:focus-visible { outline:2px solid var(--acc); outline-offset:2px; border-radius:3px; }
+  .btn.ghost { background:transparent; border-color:transparent; color:var(--mut); }
+  .btn.ghost:hover:not(:disabled) { background:var(--sunk); border-color:var(--line);
+                                    color:var(--fg); }
+  /* Rule 3: a stacked button states its consequence on the second line. */
+  .btn.stack { display:block; width:100%; text-align:left; padding:10px 13px; }
+  .btn.stack b { display:block; font-size:13.5px; font-weight:650; }
+  .btn.stack small { display:block; font-size:11.5px; line-height:1.4; color:var(--mut);
+                     margin-top:2px; font-weight:400; }
+  .btn.gen.stack small { color:var(--acc-fg); opacity:.82; }
+  .btn.done.stack small { color:var(--ok-fg); opacity:.82; }
+  .btn.edit { background:var(--edit); color:var(--edit-fg); border-color:var(--edit); }
+  .btn.edit:hover:not(:disabled) { filter:brightness(1.08); background:var(--edit); }
+  .btn.edit.stack small { color:var(--edit-fg); opacity:.85; }
+  .btn.gen.regen { background:var(--regen); color:var(--regen-fg); border-color:var(--regen); }
+  .btn.gen.regen:hover:not(:disabled) { filter:brightness(1.08); background:var(--regen); }
+  .btn.gen.regen.stack small { color:var(--regen-fg); opacity:.85; }
+  .btn.stack b .ico { display:inline-block; width:1.15em; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+  .two { display:grid; grid-template-columns:repeat(auto-fit, minmax(230px, 1fr)); gap:9px; }
+
+  /* ---------------------------------------------------------------- chips + gallery */
+  .chips { display:grid; grid-template-columns:repeat(auto-fill, minmax(185px, 1fr));
+           gap:7px; margin-top:9px; }
+  .chip { text-align:left; line-height:1.35; padding:8px 11px; border-style:dashed;
+          border-color:var(--acc-line); background:transparent; }
+  .chip:hover:not(:disabled) { border-style:solid; }
+  .chip b { font-weight:600; font-size:13px; }
+  .chip small { display:block; color:var(--faint); font-size:11px; margin-top:2px; }
+  /* Earlier rounds: small, scrollable, not selectable (selection applies to the current
+     set only). */
+  .hist { display:flex; flex-direction:column; gap:12px; max-height:420px; overflow-y:auto;
+          padding-right:4px; }
+  .hist .row-imgs { display:grid; grid-template-columns:repeat(auto-fit, minmax(62px, 1fr));
+          gap:5px; margin-top:5px; }
+  .hist .row-imgs img { width:100%; aspect-ratio:1; object-fit:cover; border-radius:8px;
+          display:block; }
+  .hist .lbl { font-size:11px; color:var(--mut); display:flex; justify-content:space-between;
+               align-items:center; gap:8px; }
+  .hist .back { font:inherit; font-size:11px; padding:3px 9px; border-radius:999px;
+                border:1px solid var(--line, #ccc); background:transparent; color:inherit;
+                cursor:pointer; white-space:nowrap; }
+  .hist .back:hover { border-color:var(--sel); color:var(--sel); }
+  .hist .lbl b { color:inherit; }
+  .hist .now { outline:2px solid var(--sel); outline-offset:2px; border-radius:10px;
+          padding:4px; }
+  .gallery { display:grid; grid-template-columns:repeat(auto-fit, minmax(165px, 1fr));
+             gap:10px; margin-top:10px; }
+  .gcard { text-align:left; padding:9px; border-radius:14px; border:1px solid var(--line);
+           background:var(--surface); cursor:pointer; display:block; width:100%;
+           transition:border-color .12s, background .12s, transform .06s; }
+  .gcard:hover { border-color:var(--acc); background:var(--acc-soft);
+                 transform:translateY(-1px); }
+  .gcard .quad { display:grid; grid-template-columns:1fr 1fr; gap:3px; }
+  .gcard .quad img { width:100%; aspect-ratio:1; object-fit:cover; border-radius:8px;
+                     display:block; background:var(--sunk); }
+  .gcard .lbl { font-size:12px; line-height:1.35; margin-top:7px; font-weight:500; }
+
+  /* ---------------------------------------------------------------- settings strip */
+  /* The diversity control: full width, with band names under it and the current band lit. */
+  .diversity { margin:16px 0 4px; display:flex; flex-direction:column; gap:6px;
+               padding:14px 15px 12px; border:1px solid var(--line); border-radius:12px;
+               background:var(--surface); box-shadow:var(--sh-sm); }
+  .diversity h3.q { margin:0; }
+  .diversity h3.q label { cursor:pointer; }
+  .diversity input[type="range"] { width:100%; accent-color:var(--sel); height:26px;
+                                   margin:0; cursor:pointer; }
+  .diversity input[type="range"]:focus-visible { outline:2px solid var(--acc);
+                                                 outline-offset:3px; border-radius:6px; }
+  .ticks span.on { color:var(--sel); font-weight:700; }
+  .vb-title { margin:0 0 8px; font-size:13px; }
+  .vb-modes { margin:0 0 10px; display:flex; width:max-content; }
+  #varybox #varyq { display:block; }
+  .alphabox { margin-top:8px; padding-top:10px; border-top:1px dashed var(--line); }
+  .alphabox label { font-size:12.5px; font-weight:600; display:block; margin-bottom:5px; }
+  .alphabox input { width:90px; font:inherit; padding:5px 8px; border:1px solid var(--line); border-radius:8px; }
+  .alphabox .hint { margin:6px 0 0; font-size:11.5px; }
+  .alphabox .warnbox { margin:8px 0 0; }
+  .diversity .hint { margin:0; }
+  .settings { background:var(--sunk); border:1px solid var(--line); border-radius:11px;
+              padding:12px 14px 3px; margin:13px 0 14px; }
+  /* Inside a recessed canvas, raise instead of sink. */
+  .card.canvas .settings { background:var(--surface); }
+  .settings h3 { margin-bottom:10px; }
+  .ticks { display:flex; justify-content:space-between; font-size:10.5px;
+           color:var(--faint); margin-top:6px; }
+  /* One dot per stop; the band words label regions of the scale, not stops. */
+  .stops { display:flex; justify-content:space-between; padding:0 10px; margin-top:-2px; }
+  .stops i { width:6px; height:6px; border-radius:50%; background:var(--faint); display:block; }
+  .stops i.on { background:var(--sel); transform:scale(1.5); }
+  .stops i.ghost { visibility:hidden; }
+  .seg { display:inline-flex; border:1px solid var(--line); border-radius:10px;
+         overflow:hidden; background:var(--surface); }
+  .seg button { border:0; border-radius:0; padding:6px 13px; background:transparent;
+                font:inherit; font-size:13.5px; color:var(--fg); cursor:pointer; }
+  .seg button + button { border-left:1px solid var(--line); }
+  .seg button[aria-pressed="true"] { background:var(--acc); color:var(--acc-fg);
+                                     font-weight:650; }
+
+  /* ---------------------------------------------------------------- misc */
+  .hint { font-size:12.5px; color:var(--mut); }
+  .warnbox { font-size:12.5px; color:var(--warn); background:var(--warn-bg);
+             border-radius:9px; padding:10px 13px; margin-top:11px; }
+  .sep { border:0; border-top:1px solid var(--line); margin:22px 0; }
+  .or { display:flex; align-items:center; gap:14px; color:var(--faint); font-size:11.5px;
+        letter-spacing:.06em; text-transform:uppercase; margin:16px 0 2px; }
+  .or::before, .or::after { content:''; flex:1; border-top:1px solid var(--line); }
+  #status { display:none; border:1px solid var(--acc-line); border-radius:11px;
+            padding:10px 14px; margin-bottom:12px; background:var(--acc-soft);
+            color:var(--fg); font-size:13.5px; }
+  #status.on { display:block; }
+  #status b { color:var(--acc); }
+  .dots::after { content:''; animation: dots 1.2s steps(4,end) infinite; }
+  @keyframes dots { 0%{content:''} 25%{content:'.'} 50%{content:'..'} 75%{content:'...'} }
+  #err { color:var(--err); white-space:pre-wrap; font-size:13.5px; margin-bottom:14px; }
+  .busy { opacity:.45; pointer-events:none; }
+  /* Study mode: the instructions as an overlay, reachable from every screen. */
+  #helpbtn { margin-left:auto; }
+  #help { position:fixed; inset:0; z-index:50; background:rgba(20,22,24,.55); display:none;
+          padding:4vh 16px; overflow:auto; }
+  #help.on { display:block; }
+  #help .card { max-width:860px; margin:0 auto; position:relative; }
+  #help .x { position:sticky; top:0; float:right; }
+</style>
+<main>
+  <div class="top">
+    <h1>axis <em>diversity</em></h1>
+    <div class="steps" id="steps"></div>
+    <button class="btn ghost" id="helpbtn" hidden>Instructions</button>
+  </div>
+  <div id="help" role="dialog" aria-modal="true" aria-label="Instructions">
+    <div class="card study-doc"><button class="btn x" id="helpx">Close</button><div id="helpbody"></div></div>
+  </div>
+  <div id="status"></div>
+  <div id="err"></div>
+  <div id="app"></div>
+</main>
+<script>
+const $ = (h) => { const d = document.createElement('div'); d.innerHTML = h.trim(); return d.firstChild; };
+let S = null, MODELS = [], MODEL = null, CACHED = [], busy = null, timer = null, t0 = 0;
+let NIID = 4, K = 4;             // from /health
+let KCHOICES = [4], KTRAINED = 4;    // from /health
+const SHOW_K_CHOICE = false;
+let LADDER = [], OFFAXIS = false, OFFAXIS_WHY = null, OFFAXIS_DEFAULT = 0.25;
+// Draft controls: what the panels show before a button sends them. Kept outside S, which
+// holds only server state.
+let draft = {k: 4, offIdx: 0, axis: '', temperature: null, top_p: null};
+let SEL = new Set();                 // image paths the user picked out of the grid
+
+const model = () => MODELS.find(m => m.key === MODEL) || {};
+const rung = (i) => LADDER[Math.max(0, Math.min(LADDER.length - 1, i))] || null;
+const rungIndexFor = (v) => {
+  if (!LADDER.length) return 0;
+  let best = 0;
+  LADDER.forEach((r, i) => {
+    if (Math.abs(r.off_axis - v) < Math.abs(LADDER[best].off_axis - v)) best = i;
+  });
+  return best;
+};
+
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g,
+    c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// Per-site note for a slower T2I model, filled into {MODEL_NOTE} in study_instructions.html.
+const SLOW_MODELS = {'qwen-image': 'This study uses a larger image model, so each set takes a little longer to appear (about 15 to 30 seconds). Please wait for the pictures rather than reloading the page.'};
+function modelNote() {
+  const t = SLOW_MODELS[MODEL];
+  return t ? `<p class="model-note"><b>Please note:</b> ${t}</p>` : '';
+}
+// setBusy only dims the screen and drives the status bar; it never re-renders. step()
+// renders once, after the new state is assigned.
+function setBusy(label) {
+  busy = label;
+  const el = document.getElementById('status');
+  const app = document.getElementById('app');
+  clearInterval(timer);
+  app.className = label ? 'busy' : '';
+  if (!label) { el.className = ''; el.textContent = ''; return; }
+  t0 = Date.now();
+  const tick = () => {
+    const s = ((Date.now() - t0) / 1000).toFixed(0);
+    el.innerHTML = `<span class="dots"><b>${escapeHtml(label)}</b></span> &nbsp; ${s}s` +
+      (SLOW_MODELS[MODEL] && +s >= 5 ? ' &nbsp;<span class="hint">(a larger model: this can take up to about 30 seconds)</span>' : '');
+  };
+  el.className = 'on'; tick();
+  timer = setInterval(tick, 250);
+}
+
+function showError(e) {
+  const msg = String((e && e.message) || e);
+  // A 409 (click raced the session state) gets a plain-language message.
+  document.getElementById('err').textContent =
+    /is only accepted in|needs [A-Z_]+ \(session is/.test(msg)
+      ? 'That step had already been taken — the page is now in sync, try again.'
+      : msg;
+}
+
+async function api(path, body, label) {
+  if (busy) return Promise.reject(new Error('busy'));   // a second click cannot double-submit
+  document.getElementById('err').textContent = '';
+  setBusy(label || 'working');
+  try {
+    // Relative, so the page works both at the port's root and under a proxy prefix (/axis/).
+    const r = await fetch(path.replace(/^\//, ''), {method:'POST',
+                                 headers:{'Content-Type':'application/json'},
+                                 body: JSON.stringify(body || {})});
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || r.statusText);
+    return j;
+  } catch (e) {
+    if (String(e.message) !== 'busy') showError(e);
+    throw e;
+  } finally { setBusy(null); }
+}
+
+// Every state-advancing call goes through here: await, assign, then render once.
+async function step(path, body, label) {
+  const j = await api(path, body, label);
+  S = j;
+  SEL.clear();          // a new grid clears the selection
+  render();
+  return j;
+}
+
+// Previews: `w` makes /media return a JPEG of that width. /download serves the originals.
+const media = (p, w) => `media?path=${encodeURIComponent(p)}&w=${w}`;
+const img = (p) => `<div><img loading="lazy" src="${media(p, 768)}"></div>`;
+
+// Image grid. With `acts`, each tile gets a "Vary this…" button that opens one shared box
+// (see wireActs). Ticking a picture only marks it as liked: for download, for suggestions,
+// and for the "Edit the others, keep these" button.
+function pickGrid(paths, prompts, acts = false) {
+  acts = acts && S && S.can_focus;
+  return `<div class="grid k${paths.length}">` + paths.map((p, i) => `<div class="tile">
+    <button class="pick" data-p="${encodeURIComponent(p)}" aria-pressed="${SEL.has(p)}"
+            title="Tick the pictures you like">
+      <div class="tick"><span>&#10003;</span></div>
+      ${img(p)}
+      ${prompts ? `<div class="cap" title="${escapeHtml(prompts[i] || '')}">${escapeHtml(prompts[i] || '')}</div>` : ''}
+    </button>
+    ${acts ? `<div class="acts">
+      <button type="button" class="btn tiny" data-vary="${i}"
+        title="Four new versions of this picture: say what should differ, or what should change">Vary this…</button></div>` : ''}
+  </div>`).join('') + `</div>` + (acts ? `
+    <div class="fixbox" id="varybox" hidden>
+      <p class="vb-title">Picture <b id="varyn"></b></p>
+      <div class="seg vb-modes" role="tablist">
+        <button type="button" data-mode="vary" aria-pressed="true">&#127922; Try variations</button>
+        <button type="button" data-mode="change" aria-pressed="false">&#9998; Make a change</button>
+      </div>
+      <label for="varytext" id="varyq">What should be different in each version?</label>
+      <div class="fixrow"><input type="text" id="varytext">
+        <button type="button" class="btn done" id="varygo">Make 4 versions</button>
+        <button type="button" class="btn ghost" id="varyno">Cancel</button></div>
+      <p class="hint" style="margin:6px 0 0"><span id="varywhat"></span> <i id="varyauto" hidden>(picked from your wording)</i></p>
+    </div>` : '');
+}
+
+// Wires the per-picture box. It takes two kinds of request:
+//   VARY   ("the time of day"): four versions that differ in it; an edit round whose sources
+//          are K copies of the picture (`focus` on /session/axis or /session/respin).
+//   CHANGE ("remove the leash"): applied as written, four attempts (/session/fix; no policy).
+// The mode is guessed from the wording (editing verb, no variety words) until the user picks
+// one with the mode buttons.
+const EDIT_VERB = /^(please\s+)?(remove|delete|erase|get rid of|take out|take away|add|put|place|insert|show|include|make|turn|change|replace|swap|give|paint|colou?r|fix|move|hide|zoom|crop|let|have)\b/i;
+const VARIETY = /\b(different|differ|various|variety|vary|varied|varying|range of|each one|each picture|several|types? of|kinds? of|styles?)\b/i;
+const readAsChange = (t) => EDIT_VERB.test(t.trim()) && !VARIETY.test(t);
+function wireActs(el, vary) {
+  const vbox = el.querySelector('#varybox');
+  if (!vbox) return;
+  const inp = vbox.querySelector('#varytext'), what = vbox.querySelector('#varywhat'),
+        auto = vbox.querySelector('#varyauto'), q = vbox.querySelector('#varyq'),
+        goBtn = vbox.querySelector('#varygo'), modes = vbox.querySelectorAll('[data-mode]');
+  const MODES = {
+    vary: {q: 'What should be different in each version?', ph: 'e.g. the time of day · the dog\'s breed · the art style',
+           btn: 'Make 4 versions', what: (n) => `You'll get 4 versions of picture ${n}, each different in this. The slider sets how different.`},
+    change: {q: 'What should change?', ph: 'e.g. remove the leash · make the sky orange · give the dog a red collar',
+             btn: 'Make this change', what: (n) => `We'll apply this change to picture ${n} four times; pick the best attempt.`},
+  };
+  let at = null, forced = null;
+  const mode = () => forced || (inp.value.trim() && readAsChange(inp.value) ? 'change' : 'vary');
+  const show = () => {
+    const m = mode(), M = MODES[m];
+    modes.forEach(b => b.setAttribute('aria-pressed', b.dataset.mode === m));
+    q.textContent = M.q; inp.placeholder = M.ph; goBtn.textContent = M.btn;
+    what.textContent = M.what(at + 1);
+    auto.hidden = !!forced || !inp.value.trim();
+  };
+  modes.forEach(b => b.onclick = () => { forced = b.dataset.mode; show(); inp.focus(); });
+  el.querySelectorAll('[data-vary]').forEach(b => b.onclick = (e) => {
+    e.stopPropagation(); at = +b.dataset.vary; forced = null;
+    vbox.hidden = false; vbox.querySelector('#varyn').textContent = at + 1;
+    inp.value = ''; show(); inp.focus();
+    vbox.scrollIntoView({behavior: 'smooth', block: 'center'});
+  });
+  inp.oninput = show;
+  vbox.querySelector('#varyno').onclick = () => { vbox.hidden = true; at = null; };
+  const go = () => {
+    const t = inp.value.trim();
+    if (!t) { document.getElementById('err').textContent = 'Say what should differ, or what should change.'; return; }
+    if (mode() === 'change')
+      step('/session/fix', {session_id: S.session_id, image: at, instruction: t},
+           `making your change to picture ${at + 1}, four ways`).catch(() => {});
+    else vary(at, t);
+  };
+  goBtn.onclick = go;
+  inp.onkeydown = (e) => { if (e.key === 'Enter') go(); };
+}
+
+// Download a zip of the selected images and their prompts. Selection never feeds the policy,
+// which was trained on whole sets of K.
+function downloadBar() {
+  return `<button id="dl" class="btn ghost"${SEL.size ? '' : ' disabled'}>` +
+         `Download ${SEL.size ? SEL.size + ' selected' : 'selected'}</button>`;
+}
+
+function syncDownload(el) {
+  const b = el.querySelector('#dl');
+  if (!b) return;
+  b.disabled = !SEL.size;
+  b.textContent = `Download ${SEL.size ? SEL.size + ' selected' : 'selected'}`;
+}
+
+// Not through api(), since the response is a zip, not JSON.
+async function downloadSelected() {
+  if (!SEL.size || busy) return;
+  document.getElementById('err').textContent = '';
+  setBusy('packaging your pictures');
+  try {
+    const r = await fetch('download', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({session_id: S.session_id, images: [...SEL]})});
+    if (!r.ok) {
+      let m; try { m = (await r.json()).error; } catch (_) { m = r.statusText; }
+      throw new Error(m);
+    }
+    const url = URL.createObjectURL(await r.blob());
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `pictures-${SEL.size}.zip`;
+    document.body.appendChild(a); a.click(); a.remove();
+    // Revoke late: Safari can cancel the save if the URL is revoked too soon.
+    setTimeout(() => URL.revokeObjectURL(url), 20000);
+  } catch (e) {
+    showError(e); reportClientError(e, 'download');
+  } finally { setBusy(null); }
+}
+
+// Download the ticked pictures, or all of `images` when none is ticked.
+async function downloadOrAll(images) {
+  if (!SEL.size && images) images.forEach(p => SEL.add(p));
+  await downloadSelected();
+}
+
+function wireDownload(el) {
+  const b = el.querySelector('#dl');
+  if (b) b.onclick = downloadSelected;
+}
+
+// "Edit these" edits all pictures. In a study, once some (not all) are ticked, the selection
+// bar offers "Edit the others, keep these". `imgs` is the grid an edit would change.
+let KEEPSYNC = null, KEEPNOW = false;
+const keepLine = () => STUDY.on ? `<div class="selbar" hidden>
+  <span class="selbar-t"><b class="seln"></b> ticked:</span>
+  <button type="button" class="btn edit" id="keepgo"><span class="ico" aria-hidden="true">&#9998;</span>
+    Edit the others, keep these</button>
+</div>` : '';   // outside a study, ticking only selects for download
+function wireKeep(el, imgs, fire) {
+  const bar = el.querySelector('.selbar');
+  if (!bar) return;
+  KEEPSYNC = () => {
+    const n = imgs.filter(p => SEL.has(p)).length;
+    bar.hidden = !(n > 0 && n < imgs.length && S.can_keep);
+    bar.querySelector('.seln').textContent = n === 1 ? '1 picture' : `${n} pictures`;
+  };
+  KEEPSYNC();
+  bar.querySelector('#keepgo').onclick = () => { FOCUS = null; KEEPNOW = true; fire(); };
+}
+// KEEPNOW and FOCUS are set by a button, consumed by the request it sends (possibly after the
+// rephrase card), and cleared by every other round button.
+function keepIdx(el, imgs) {
+  if (!KEEPNOW) return null;
+  KEEPNOW = false;
+  const idx = imgs.map((p, i) => SEL.has(p) ? i : -1).filter(i => i >= 0);
+  return idx.length && idx.length < imgs.length ? idx : null;
+}
+let FOCUS = null;     // grid index of the picture a "Vary this" request is about
+const TICK_HINT = 'Tick the pictures you want to download. To work further on one picture, use its ' +
+  '“Vary this…” button.';
+
+function wirePicks(el) {
+  el.querySelectorAll('.pick').forEach(b => b.onclick = () => {
+    const p = decodeURIComponent(b.dataset.p);
+    if (SEL.has(p)) SEL.delete(p); else SEL.add(p);
+    b.setAttribute('aria-pressed', SEL.has(p));
+    el.querySelectorAll('.selcount').forEach(n =>
+      n.textContent = SEL.size ? `${SEL.size} selected` : 'all of them');
+    syncDownload(el);
+    if (KEEPSYNC) KEEPSYNC();
+    if (typeof relabel === 'function') relabel();
+    scheduleSubsetSuggest();
+  });
+}
+
+// ---------------------------------------------------------------- suggestions
+//
+// The server pushes suggestions onto the session. This side shows them and polls while one is
+// pending, repainting only the chip row and its hint so typed text is kept.
+
+let pollTimer = null, selTimer = null;
+let repaint = null;    // the mounted screen's chip painter; null between screens
+let relabel = null;    // the mounted screen's button relabeller; null between screens
+
+// The suggestion record for this screen: CHOOSE_AXIS shows the i.i.d. set's ('iid'), REVIEW
+// the current grid's ('current').
+function chipsFor(state) {
+  const want = state === 'REVIEW' ? 'current' : 'iid';
+  const list = (S && S.suggested) || [];
+  // On REVIEW, ignore records older than the trial on screen (they describe an earlier grid).
+  const t = state === 'REVIEW' && S.trials.length ? S.trials[S.trials.length - 1] : null;
+  for (let i = list.length - 1; i >= 0; i--) {
+    const r = list[i];
+    if (r.from !== want) continue;
+    if (t && r.ts < t.created) return null;
+    return r;
+  }
+  return null;
+}
+
+// Drop rejected axes; records made before a rejection may still contain them.
+function liveAxes(rec) {
+  const gone = new Set(((S && S.rejected_axes) || []).map(x => String(x).toLowerCase()));
+  return ((rec && rec.axes) || []).filter(a => !gone.has(String(a.name).toLowerCase()));
+}
+
+// Hint above the chips, including a "looking…" line while the VLM is still working.
+function suggestHint(axes) {
+  if (S && S.suggest_pending)
+    return SEL.size ? `Looking at the ${SEL.size} you picked…`
+                    : 'Looking at these images for what they all have in common…';
+  if (S && S.suggest_error) return 'Suggestions are unavailable — describe it yourself above.';
+  if (!axes.length) return '';
+  return 'Suggested axes';
+}
+
+// Put a chip's axis in the box. Empty or prefilled text is replaced at once; text the user
+// typed (data-dirty) is replaced only after confirmation.
+function applyChip(box, name, after) {
+  const mine = box.dataset.dirty === '1' && box.value.trim();
+  // The confirmation goes directly after the input.
+  let u = box.nextElementSibling;
+  if (!u || !u.classList.contains('chipask')) {
+    u = document.createElement('p');
+    u.className = 'chipask';
+    box.insertAdjacentElement('afterend', u);
+  }
+  const set = (v) => {
+    box.value = v;
+    box.dataset.dirty = '';
+    box.dataset.chip = v;   // our own suggestion: withRephrase never second-guesses it
+    if (after) after();
+    u.textContent = '';
+    box.focus();
+  };
+  if (!mine || box.value.trim() === String(name).trim()) { set(name); return; }
+  u.innerHTML = '<span class="ask-t">This will replace what you wrote with ' +
+                '“<b></b>”.</span>' +
+                '<span class="ask-b">' +
+                '<button type="button" class="btn tiny" data-y>Replace</button>' +
+                '<button type="button" class="btn tiny ghost" data-n>Cancel</button>' +
+                '</span>';
+  u.querySelector('b').textContent = name;
+  u.querySelector('[data-y]').onclick = () => set(name);
+  u.querySelector('[data-n]').onclick = () => { u.textContent = ''; box.focus(); };
+}
+
+function paintChips(el, onPick) {
+  const axes = liveAxes(chipsFor(S && S.state));
+  const box = el.querySelector('#chips'), hint = el.querySelector('#sughint');
+  if (hint) hint.textContent = suggestHint(axes);
+  if (!box) return;
+  box.innerHTML = axes.map((a, i) => `<button class="btn chip" data-i="${i}">
+      <b>${escapeHtml(a.name)}</b>
+      <small>${escapeHtml((a.example_values || []).join(' · '))}</small></button>`).join('');
+  box.querySelectorAll('.chip').forEach(b => b.onclick = () => onPick(axes[+b.dataset.i]));
+}
+
+function syncPoll() {
+  clearInterval(pollTimer);
+  pollTimer = null;
+  if (!S || !S.suggest_pending) return;
+  if (S.state !== 'CHOOSE_AXIS' && S.state !== 'REVIEW') return;
+  pollTimer = setInterval(async () => {
+    try {
+      if (!S) return;
+      const j = await (await fetch(`session/get?session_id=${S.session_id}`)).json();
+      // If the state changed, the request that changed it renders the new screen.
+      if (!j || !j.session_id || j.state !== S.state) return;
+      S = j;
+      if (repaint) repaint();
+      syncPoll();
+    } catch (e) { /* a failed poll only costs chips */ }
+  }, 1500);
+}
+
+// Re-ask for suggestions about the selected images. Debounced 1.2 s; a bare fetch, so it
+// never dims the screen or blocks a click.
+function scheduleSubsetSuggest() {
+  clearTimeout(selTimer);
+  selTimer = setTimeout(() => {
+    if (!S || (S.state !== 'CHOOSE_AXIS' && S.state !== 'REVIEW')) return;
+    const b = {session_id: S.session_id, background: true,
+               from: S.state === 'REVIEW' ? 'current' : 'iid'};
+    if (SEL.size) b.images = [...SEL];
+    fetch('session/suggest', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                               body: JSON.stringify(b)})
+      .then(() => { if (S) { S.suggest_pending = true; if (repaint) repaint(); syncPoll(); } })
+      .catch(() => {});
+  }, 1200);
+}
+
+// ---------------------------------------------------------------- shared controls
+
+// The diversity control. The slider selects a rung of the checkpoint ladder and snaps to it;
+// the UI never says "checkpoint" or "step". Band names come from the server (config._BANDS).
+// seedNo is the set's random seed (t.seed). With the same seed, moving the slider keeps the
+// ideas and changes how far they go; a new seed keeps the level and changes the ideas.
+const SEED_TIP = 'The seed is the random starting point the tool uses to pick its ideas. ' +
+  'Click to draw a new random seed: you get a different set of ideas at the same diversity level. ' +
+  'With the same seed, moving the slider keeps these ideas and only changes how far they go.';
+const PROMPT_TIP = 'Add or change something that every picture should have, for example “a couple” ' +
+  'or “at night”. The pictures are redrawn from your new prompt, and you start again from them.';
+// Alpha ladder (every rung has `alpha`): the slider runs continuously from 0 to 1 and snaps to
+// the nearest rung (every 0.05 of LoRA scale) on release.
+const alphaLadder = () => LADDER.length > 1 && LADDER.every(r => r.alpha != null);
+const alphaText = (i) => { const r = rung(i); return r ? r.alpha.toFixed(2) : ''; };
+const ALPHA_MAX = 2;   // the alpha ladders go to 2 (rungs above 1 are reached through the alpha box)
+function offAxisControl(idx, seedNo = null) {
+  if (!OFFAXIS) return '';
+  const n = LADDER.length;
+  if (alphaLadder()) {
+    const bands = [];
+    LADDER.forEach(r => { if (bands[bands.length - 1] !== r.band) bands.push(r.band); });
+    const v = rung(idx) ? rung(idx).alpha : 0;
+    return `<div class="diversity">
+    <div class="oa-head"><h3 class="q"><label for="oa">How different should they be?</label></h3>
+      ${seedNo != null ? `<button type="button" class="btn tiny ghost seedchip" id="newdraw"
+        title="${SEED_TIP}" aria-label="Seed ${seedNo}. ${SEED_TIP}">Seed: ${seedNo}</button>` : ''}</div>
+    <input type="range" id="oa" data-alpha="1" min="0" max="1" step="any" value="${Math.min(v, 1)}" style="--fill:calc(${Math.min(v, 1)} * 100%)">
+    <div class="ticks">${bands.map(bd => `<span${bd === rungText(idx) ? ' class="on"' : ''}
+      >${escapeHtml(bd)}</span>`).join('')}</div>
+    <p class="hint">Left stays closer to your original prompt; right is more creative and diverse.</p>
+    <div class="alphabox">
+      <label for="oatext">You can enter your own alpha value manually</label>
+      <input type="number" id="oatext" min="0" max="${ALPHA_MAX}" step="0.05" value="${v.toFixed(2)}">
+      <p class="hint">Alpha is the strength of the trained LoRA weights: 0 is the untrained model and 1 the
+        trained one, which is the right end of the slider. You can go beyond 1 (up to ${ALPHA_MAX}) if even the
+        most varied setting is not enough. Values are rounded to the nearest 0.05.</p>
+      <p class="warnbox" id="oawarn"${v > 1 ? '' : ' hidden'}>Above 1 the model goes past what it was
+        trained for: the pictures become very diverse and can drift away from your prompt.</p>
+    </div>
+  </div>`;
+  }
+  const bands = [];
+  LADDER.forEach(r => { if (bands[bands.length - 1] !== r.band) bands.push(r.band); });
+  return `<div class="diversity">
+    <div class="oa-head"><h3 class="q"><label for="oa">How different should they be?</label></h3>
+      ${seedNo != null ? `<button type="button" class="btn tiny ghost seedchip" id="newdraw"
+        title="${SEED_TIP}" aria-label="Seed ${seedNo}. ${SEED_TIP}">Seed: ${seedNo}</button>` : ''}</div>
+    <input type="range" id="oa" min="0" max="${n}" step="1" value="${idx + 1}" list="oastops" style="--fill:calc(10px + ${idx + 1} / ${n} * (100% - 20px))">
+    <datalist id="oastops">${LADDER.map((_, i) => `<option value="${i + 1}"></option>`).join('')}</datalist>
+    <div class="stops"><i class="ghost"></i>${LADDER.map((_, i) => `<i${i === idx ? ' class="on"' : ''}></i>`).join('')}</div>
+    <div class="ticks">${bands.map(bd => `<span${bd === rungText(idx) ? ' class="on"' : ''}
+      >${escapeHtml(bd)}</span>`).join('')}</div>
+    <p class="hint">Drag it. Left stays closer to your original prompt; right is more
+      creative and diverse.</p>
+  </div>`;
+}
+function rungText(i) { const r = rung(i); return r ? r.band : ''; }
+
+// offAxisControl renders nothing when the run has no ladder (A/B run, --no-off-axis, or
+// nothing exported), so this must return early when #oa is absent.
+function wireOffAxis(el) {
+  const oa = el.querySelector('#oa');
+  if (!oa) return;
+  if (oa.dataset.alpha) {
+    const box = el.querySelector('#oatext'), warn = el.querySelector('#oawarn');
+    const paint = (fromBox) => {
+      const r = rung(draft.offIdx), a = r ? r.alpha : 0;
+      const now = rungText(draft.offIdx);
+      el.querySelectorAll('.ticks span').forEach(sp => sp.classList.toggle('on', sp.textContent.trim() === now));
+      if (!fromBox) box.value = a.toFixed(2);
+      if (warn) warn.hidden = !(a > 1);
+      oa.style.setProperty('--fill', `calc(${Math.min(+oa.value, 1)} * 100%)`);
+    };
+    oa.oninput = () => { draft.offIdx = rungIndexFor(+oa.value); paint(false); };
+    oa.onchange = () => { draft.offIdx = rungIndexFor(+oa.value); oa.value = Math.min(rung(draft.offIdx).alpha, 1); paint(false); };
+    box.oninput = () => {
+      const a = parseFloat(box.value);
+      if (!isFinite(a)) return;
+      draft.offIdx = rungIndexFor(Math.max(0, Math.min(ALPHA_MAX, a)));
+      oa.value = Math.min(rung(draft.offIdx).alpha, 1);
+      paint(true);
+    };
+    box.onchange = () => { box.value = rung(draft.offIdx).alpha.toFixed(2); };   // show the rounded value
+    return;
+  }
+  oa.oninput = () => {
+    if (+oa.value < 1) { oa.value = 1; }          // the phantom position 0 cannot be selected
+    draft.offIdx = +oa.value - 1;
+    const ov = el.querySelector('#ov');
+    if (ov) ov.textContent = rungText(draft.offIdx);
+    const now = rungText(draft.offIdx);
+    el.querySelectorAll('.ticks span').forEach(sp =>
+      sp.classList.toggle('on', sp.textContent.trim() === now));
+    el.querySelectorAll('.stops i:not(.ghost)').forEach((d, i) => d.classList.toggle('on', i === draft.offIdx));
+    oa.style.setProperty('--fill', `calc(10px + ${draft.offIdx + 1} / ${LADDER.length} * (100% - 20px))`);
+  };
+}
+
+// Set size. Sizes other than KTRAINED (4) show a warning.
+function kControl(k) {
+  return `<div class="field">
+    <label>How many images?</label>
+    <div class="seg" id="kseg">${KCHOICES.map(n =>
+      `<button data-k="${n}" aria-pressed="${n === k}">${n}</button>`).join('')}</div>
+    <div class="warnbox" id="kwarn" style="${k === KTRAINED ? 'display:none' : ''}">
+      This tool was tuned to write sets of ${KTRAINED}. Other sizes work, but results may be
+      less reliable.
+    </div>
+  </div>`;
+}
+
+function wireK(el) {
+  el.querySelectorAll('#kseg button').forEach(b => b.onclick = () => {
+    draft.k = +b.dataset.k;
+    el.querySelectorAll('#kseg button').forEach(x =>
+      x.setAttribute('aria-pressed', +x.dataset.k === draft.k));
+    const w = el.querySelector('#kwarn');
+    if (w) w.style.display = draft.k === KTRAINED ? 'none' : '';
+    if (typeof relabel === 'function') relabel();
+  });
+}
+
+
+// Sampling controls, behind a disclosure. Training used temperature 1.0 and top_p 1.0; those
+// are the defaults, and other values show a warning.
+function samplingControl() {
+  const t = draft.temperature == null ? 1.0 : draft.temperature;
+  const p = draft.top_p == null ? 1.0 : draft.top_p;
+  const off = (t === 1.0 && p === 1.0);
+  return `<details class="field" id="sampbox" ${off ? '' : 'open'}>
+    <summary>Advanced: sampling</summary>
+    <label for="temp">Temperature — <b id="tv">${t.toFixed(2)}</b></label>
+    <input type="range" id="temp" min="0.5" max="1.5" step="0.05" value="${t}">
+    <div class="hint">Lower repeats the safest phrasing; higher invents more, including
+      mistakes. Trained at 1.00.</div>
+    <label for="topp" style="margin-top:10px">Top-p — <b id="pv">${p.toFixed(2)}</b></label>
+    <input type="range" id="topp" min="0.50" max="1.00" step="0.05" value="${p}">
+    <div class="hint">Below 1.00 discards the least likely words outright. Trained at 1.00.</div>
+    <div class="warnbox" id="sampwarn" style="${off ? 'display:none' : ''}">
+      Not the setting this model was tuned at — results may be less reliable.
+    </div>
+  </details>`;
+}
+
+function wireSampling(el) {
+  const t = el.querySelector('#temp'), p = el.querySelector('#topp');
+  if (!t || !p) return;
+  const sync = () => {
+    const off = (draft.temperature == null || draft.temperature === 1.0)
+             && (draft.top_p == null || draft.top_p === 1.0);
+    const w = el.querySelector('#sampwarn');
+    if (w) w.style.display = off ? 'none' : '';
+  };
+  t.oninput = () => {
+    draft.temperature = +t.value;
+    const v = el.querySelector('#tv'); if (v) v.textContent = draft.temperature.toFixed(2);
+    sync();
+  };
+  p.oninput = () => {
+    draft.top_p = +p.value;
+    const v = el.querySelector('#pv'); if (v) v.textContent = draft.top_p.toFixed(2);
+    sync();
+  };
+}
+
+// Send an override only when it differs from the trained value (1.0).
+function withSampling(b) {
+  if (draft.temperature != null && draft.temperature !== 1.0) b.temperature = draft.temperature;
+  if (draft.top_p != null && draft.top_p !== 1.0) b.top_p = draft.top_p;
+  return b;
+}
+
+function settingsStrip(idx, k, seedNo = null) {
+  // Set-size choice is hidden unless SHOW_K_CHOICE (every set is KTRAINED). The diversity
+  // control sits outside the settings box so it is not mistaken for configuration.
+  const extra = (SHOW_K_CHOICE ? kControl(k) : '') + samplingControl();
+  return offAxisControl(idx, seedNo) +
+         (extra ? `<div class="settings"><h3>Settings</h3>${extra}</div>` : '');
+}
+
+// ---------------------------------------------------------------- screens
+
+// Rule 7: prompt box first, pre-rendered example gallery below it (hidden in study mode).
+function screenStart() {
+  const m = model();
+  const cards = CACHED.map((c, i) => `<button class="gcard" data-i="${i}">
+      <div class="quad">${c.images.slice(0, NIID).map(p =>
+        `<img loading="lazy" src="${media(p, 384)}">`).join('')}</div>
+      <div class="lbl">${escapeHtml(c.prompt)}</div></button>`).join('');
+  const el = $(`<div>
+    <div class="card narrow">
+      ${STUDY.on ? `<p class="eyebrow">Set ${picturesDone() + 1} of ${STUDY.pictures} · Step 1</p>` : ''}
+      <h2>Enter your prompt to generate images</h2>
+      <p class="lede">Describe it in a few words. The platform generates
+        ${['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight'][NIID] || NIID}
+        images for your prompt and you can edit their variety the way you like.</p>
+      <input type="text" id="p" class="big" autofocus
+             placeholder="a chef plating dessert in a busy kitchen">
+      <div class="row" style="margin-top:14px">
+        <button class="btn gen" id="go">Make ${NIID} pictures</button>
+        <span class="hint">Takes a few seconds.</span>
+      </div>
+    </div>
+    ${CACHED.length && !STUDY.on ? `
+      <div class="or">or pick one to start from</div>
+      <div class="card canvas">
+        <p class="eyebrow">Examples</p>
+        <p class="lede" style="margin-bottom:2px">Feel free to choose one of the prompts below
+          if you need inspiration!</p>
+        <div class="gallery">${cards}</div>
+      </div>` : ''}
+  </div>`);
+  const go = async (v) => {
+    v = (v || el.querySelector('#p').value).trim();
+    if (!v) {
+      document.getElementById('err').textContent =
+        'Type what you want to see — or pick one of the examples below.';
+      el.querySelector('#p').focus();
+      return;
+    }
+    // Study mode requires at least two words.
+    if (STUDY.on && v.split(/\s+/).length < 2) {
+      document.getElementById('err').textContent =
+        'Please describe the image in at least two words, in your own words.';
+      el.querySelector('#p').focus();
+      return;
+    }
+    const cached = CACHED.some(c => c.prompt === v);
+    step('/session/prompt', {session_id: S.session_id, base_prompt: v},
+         cached ? 'opening' : `making ${NIID} pictures`).catch(() => {});
+  };
+  el.querySelector('#go').onclick = () => go();
+  el.querySelector('#p').onkeydown = (e) => { if (e.key === 'Enter') go(); };
+  el.querySelectorAll('.gcard').forEach(b => b.onclick = () => go(CACHED[+b.dataset.i].prompt));
+  return el;
+}
+
+function screenGate() {
+  // Outside a study, skip this step and go straight to the axis step.
+  if (!STUDY.on) {
+    setTimeout(() => step('/session/gate', {session_id: S.session_id, needs_diversity: true}, 'loading').catch(() => {}), 0);
+    return $(`<div class="card narrow"><p class="lede">Loading your pictures…</p></div>`);
+  }
+  const el = $(`<div class="cols left-heavy">
+    <div><div class="card canvas">
+      <p class="eyebrow">Your pictures</p>
+      <h2>${escapeHtml(S.base_prompt)}</h2>
+      <p class="lede">${NIID} tries at the same prompt${S.iid.cached ? '' : ', just made'}.</p>
+      <div class="grid">${S.iid.images.map(img).join('')}</div>
+    </div></div>
+    <div><div class="card">
+      <p class="eyebrow">Step 2</p>
+      <h2>Would you like to vary these images?</h2>
+      <p class="lede">If yes, on the next step you can describe in a few words what should
+        change between them, or pick one of the axes we suggest.</p>
+      <div class="row">
+        <button class="btn gen" id="yes">Yes — let's vary them</button>
+        <button class="btn ghost" id="no">No, these are fine</button>
+      </div>
+      <div class="finish" id="nowhy" hidden>
+        <label for="nowhytext">What makes this set fine as it is?</label>
+        <textarea id="nowhytext" rows="3"
+          placeholder="e.g. the four already differ in setting and age, which is what I wanted"></textarea>
+        <div class="row"><button class="btn" id="nosend">Accept these and continue</button></div>
+      </div>
+    </div></div>
+  </div>`);
+  el.querySelector('#yes').onclick = async () =>
+    await step('/session/gate', {session_id: S.session_id, needs_diversity: true}, 'saving');
+  const sendNo = async (reason) =>
+    await step('/session/gate', {session_id: S.session_id, needs_diversity: false, reason}, 'saving');
+  // In a study, "no" requires a reason (stored as `reason` on the gate event).
+  el.querySelector('#no').onclick = async () => {
+    if (!STUDY.on) return sendNo(null);
+    el.querySelector('#nowhy').hidden = false;
+    el.querySelector('#nowhytext').focus();
+  };
+  el.querySelector('#nosend').onclick = async () => {
+    const why = el.querySelector('#nowhytext').value.trim();
+    if (why.split(/\s+/).length < 4) {
+      document.getElementById('err').textContent = 'Please tell us in a sentence why this set is fine.';
+      return;
+    }
+    await sendNo(why.slice(0, 2000));
+  };
+  return el;
+}
+
+// Rephrase card. The policy expects a short axis name; /session/rephrase asks the suggest VLM
+// whether the typed text is one. If not, this card offers a restatement and, for a
+// constraint, a clause to add to the prompt. The recorded axis is always the user's choice.
+function rephraseCard(slot, raw, r, mode, act) {
+  const esc = escapeHtml, kind = r.kind;
+  const differs = r.axis && r.axis.toLowerCase() !== raw.toLowerCase();
+  const useBtn = differs ? `<button class="btn tiny gen" data-do="use">Use “${esc(r.axis)}”</button>` : '';
+  const addBtn = r.add ? `<button class="btn tiny${r.axis ? '' : ' gen'}" data-do="add">${r.axis && mode !== 'live'
+      ? `Add “${esc(r.add)}” to the prompt, then vary ${esc(r.axis)}` : `Add “${esc(r.add)}” to the prompt`}</button>` : '';
+  const keep = `<button class="btn tiny ghost" data-do="keep">${mode === 'live' ? 'Dismiss' : 'Keep mine'}</button>`;
+  // "Use" only fills the box; the mode comes from the Generate/Edit button pressed next.
+  let text;
+  if (!r.axis && r.add) {
+    text = `This sounds like something for every picture. Add “<b>${esc(r.add)}</b>” to your prompt? The pictures are redrawn from the new prompt and you can then say what should differ.`;
+  } else {
+    text = differs ? `We read this as: vary <b>${esc(r.axis)}</b>` : `We read this as an axis`;
+    if (r.add) text += `${differs ? ',' : ''} with “<b>${esc(r.add)}</b>” in every picture`;
+    text += '.';
+    if (r.add && S.trials.length) text += ' Adding it to the prompt starts again from new pictures.';
+  }
+  slot.innerHTML = `<div class="chipask"><span class="ask-t">${text}</span>
+    <span class="ask-b">${[useBtn, addBtn, keep].filter(Boolean).join('')}</span></div>`;
+  uiLog('rephrase_shown', {kind, raw, axis: r.axis, add: r.add, mode});
+  slot.querySelectorAll('[data-do]').forEach(b => b.onclick = () => {
+    uiLog('rephrase_choice', {kind, choice: b.dataset.do, mode});
+    act(b.dataset.do);
+  });
+}
+
+// Prompt line with an in-place "Change prompt" editor; /session/reprompt redraws the pictures
+// from the new text. PROMPT_NOTE ({old}) is shown once, on the next screen.
+let PROMPT_NOTE = null, PROMPT_NOTE_LAST = null;
+function promptLine(heading, seedNo = null) {
+  const esc = escapeHtml, note = PROMPT_NOTE; PROMPT_NOTE = null;
+  const txt = heading ? `<h2 class="pl-text">${esc(S.base_prompt)}</h2>`
+                      : `<p class="pl-text"><b>Your prompt:</b> ${esc(S.base_prompt)}</p>`;
+  return `<div class="promptline">
+    <div class="pl-view">${txt}<span class="pl-btns"><button type="button" class="pl-action" data-pedit
+        data-tip="${PROMPT_TIP}" aria-label="Change prompt. ${PROMPT_TIP}">&#9998; Change prompt</button>${seedNo != null ? `<button type="button" class="pl-action seed" id="newdraw"
+        data-tip="${SEED_TIP}" aria-label="Change seed, now seed ${seedNo}. ${SEED_TIP}">&#127922; Change seed <span class="seedno">current seed: ${seedNo}</span></button>` : ''}</span></div>
+    ${note ? `<p class="hint pl-note">Prompt updated (was “${esc(note.old)}”). The pictures were redrawn from it.</p>` : ''}
+    <div class="pl-edit" hidden>
+      <input type="text" class="big" data-pinput value="${esc(S.base_prompt)}">
+      <p class="hint" style="margin:6px 0">Add anything every picture should have${S.trials.length
+        ? '. This starts again from new pictures' : ''}.</p>
+      <div class="row"><button type="button" class="btn tiny gen" data-psave>Update prompt</button>
+        <button type="button" class="btn tiny ghost" data-pcancel>Cancel</button></div>
+    </div></div>`;
+}
+function openPromptEdit(el, append) {
+  const ed = el.querySelector('.pl-edit'), inp = el.querySelector('[data-pinput]');
+  if (!ed) return;
+  ed.hidden = false; el.querySelector('.pl-view').hidden = true;
+  if (append && !/,\s*$/.test(inp.value)) inp.value = inp.value.replace(/[.\s]+$/, '') + ', ';
+  inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length);
+  uiLog('prompt_edit_open', {append: !!append});
+}
+function wirePromptLine(el) {
+  const q = (x) => el.querySelector(x);
+  if (!q('.promptline')) return;
+  q('[data-pedit]').onclick = () => openPromptEdit(el, false);
+  el.querySelectorAll('[data-padd]').forEach(a => a.onclick = (e) => { e.preventDefault(); openPromptEdit(el, true); });
+  q('[data-pcancel]').onclick = () => { q('.pl-edit').hidden = true; q('.pl-view').hidden = false; };
+  const save = () => {
+    const v = q('[data-pinput]').value.trim().replace(/,\s*$/, '');
+    if (!v || v === S.base_prompt) return q('[data-pcancel]').onclick();
+    changePrompt(v, {}).catch(() => {});
+  };
+  q('[data-psave]').onclick = save;
+  q('[data-pinput]').onkeydown = (e) => { if (e.key === 'Enter') save(); };
+}
+function changePrompt(text, extra) {
+  PROMPT_NOTE = PROMPT_NOTE_LAST = {old: S.base_prompt};
+  return step('/session/reprompt', Object.assign({session_id: S.session_id, base_prompt: text}, extra),
+              'updating your prompt and its pictures')
+    .catch((e) => { PROMPT_NOTE = PROMPT_NOTE_LAST = null; throw e; });
+}
+// Empty: the prompt is edited from the prompt line instead.
+const ADD_TO_PROMPT_HINT = '';
+
+// The card's verdict for the text now in the box, so the next submit needs no second reading:
+// {raw, axis, source, offer}. Cleared whenever the box is edited by hand.
+let REPHRASED = null;
+
+// Live rephrase: ask ~1.2 s after typing stops and show the card under the box. Its buttons
+// fill the box or amend the prompt; they never start a set.
+const RCACHE = new Map();   // typed text -> /session/rephrase answer (null = no card)
+let RTIMER = null;
+function liveRephrase(slot, box, skip) {
+  clearTimeout(RTIMER);
+  const raw = box.value.trim();
+  if (raw.split(/\s+/).length <= 2 || (skip && raw.toLowerCase() === skip.toLowerCase())) return;
+  if (box.dataset.chip && raw === box.dataset.chip.trim()) return;
+  RTIMER = setTimeout(async () => {
+    if (REPHRASED && REPHRASED.axis === raw) return;   // the card's own "Use" just put it there
+    let r = RCACHE.get(raw);
+    if (r === undefined) {
+      try {
+        const res = await fetch('session/rephrase', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                                     body: JSON.stringify({session_id: S.session_id, axis: raw})});
+        r = res.ok ? await res.json() : null;
+      } catch (_) { r = null; }
+      RCACHE.set(raw, r);
+    }
+    if (box.value.trim() !== raw || !r || !r.show || !document.body.contains(slot)) return;
+    const offer = {kind: r.kind, axis: r.axis, add: r.add};
+    rephraseCard(slot, raw, r, 'live', (choice) => {
+      if (choice === 'use') {
+        box.value = r.axis; box.dispatchEvent(new Event('input')); box.focus();
+        REPHRASED = {raw, axis: r.axis, source: 'rephrased', offer};   // after the input handler cleared it
+        slot.innerHTML = `<div class="chipask"><span class="ask-t">Now press <b>Generate new</b> or <b>Edit these</b>.</span></div>`;
+        return;
+      }
+      if (choice === 'keep') { slot.innerHTML = ''; return; }
+      // add: amend the prompt; the axis the card read (if any) is waiting in the box afterwards.
+      slot.innerHTML = '';
+      const joined = S.base_prompt.replace(/[.\s]+$/, '') + ', ' + r.add;
+      changePrompt(joined, {axis: r.axis || '', axis_raw: raw, add: r.add}).then(() => {
+        if (r.axis) REPHRASED = {raw, axis: r.axis, source: 'rephrased', offer};
+      }).catch(() => {});
+    });
+  }, 1200);   // shorter delays fire on half-typed words
+}
+
+// Ask /session/rephrase for the typed axis; call go(axis, source, extra) to proceed, or show the card.
+async function withRephrase(slot, raw, mode, go, box) {
+  if (REPHRASED && REPHRASED.axis === raw) {
+    const p = REPHRASED; REPHRASED = null; slot.innerHTML = '';
+    return go(raw, p.source, {axis_raw: p.raw, rephrase: p.offer});
+  }
+  // An unedited suggestion chip is already an axis; do not rephrase it.
+  if (box && box.dataset.chip && raw === box.dataset.chip.trim()) return go(raw, 'free', {});
+  // Text the live check already answered is sent as typed; only unchecked text is read here.
+  if (RCACHE.has(raw)) {
+    const r = RCACHE.get(raw);
+    slot.innerHTML = '';
+    return go(raw, 'free', r && r.show ? {axis_raw: raw, rephrase: {kind: r.kind, axis: r.axis, add: r.add}} : {});
+  }
+  let r = null;
+  try { r = await api('/session/rephrase', {session_id: S.session_id, axis: raw}, 'reading your request'); }
+  catch (_) { r = null; }
+  if (!r || !r.show) return go(raw, 'free', {});
+  const offer = {kind: r.kind, axis: r.axis, add: r.add};
+  rephraseCard(slot, raw, r, mode, (choice) => {
+    if (choice === 'use') {
+      REPHRASED = {raw, axis: r.axis, source: 'rephrased', offer};
+      box.value = r.axis; box.dispatchEvent(new Event('input')); box.focus();
+      REPHRASED = {raw, axis: r.axis, source: 'rephrased', offer};   // the input handler cleared it
+      slot.innerHTML = `<div class="chipask"><span class="ask-t">Now press <b>Generate new</b> or <b>Edit these</b>.</span></div>`;
+      return;
+    }
+    if (choice === 'keep') { REPHRASED = {raw, axis: raw, source: 'free', offer}; slot.innerHTML = ''; return go(raw, 'free', {axis_raw: raw, rephrase: offer}); }
+    slot.innerHTML = '';
+    const joined = S.base_prompt.replace(/[.\s]+$/, '') + ', ' + r.add;
+    // With an axis in the reading, make the set right after amending the prompt, in the mode
+    // pressed. Edit mode edits the new pictures.
+    return changePrompt(joined, {axis: r.axis || '', axis_raw: raw, add: r.add}).then(() => {
+      if (!r.axis) return;
+      const m = (mode === 'generate' || !S.can_edit) ? 'generate' : 'edit';
+      const b = withSampling({session_id: S.session_id, axis: r.axis, source: 'rephrased', k: draft.k,
+                              mode: m, axis_raw: raw, rephrase: offer});
+      if (OFFAXIS && rung(draft.offIdx)) b.off_axis = rung(draft.offIdx).off_axis;
+      PROMPT_NOTE = PROMPT_NOTE_LAST;   // keep the "prompt updated" line on the set this makes
+      return step('/session/axis', b, m === 'edit' ? `editing ${S.iid.images.length} pictures`
+                                                   : `generating ${draft.k} pictures`);
+    }).catch(() => {});
+  });
+}
+
+// Feedback tip: after the ratings (or a "too much / too little" comment), point at the
+// control that addresses it, before the participant picks Yes/No.
+function feedbackTip(ratings, comment, axis) {
+  const c = (comment || '').toLowerCase();
+  const tooMuch = /too (much|different|varied|far)|changed everything|whole (scene|image)|not (the same|my prompt)/.test(c);
+  const tooLittle = /too (similar|little|same|alike)|not enough|barely|hardly|(all|look) the same|didn.t (change|vary)/.test(c);
+  const v = ratings.varied, m = ratings.matched;
+  if (tooMuch || (m && m <= 2 && (!v || v >= 3)))
+    return {key: 'too_much', text: `Changed more than you wanted? Move the slider towards <b>least varied</b>, or keep this set and use <b>Edit these</b> so only “${escapeHtml(axis)}” changes.`, less: true};
+  if (tooLittle || (v && v <= 2 && (!m || m >= 3)))
+    return {key: 'too_little', text: `Not enough variety? Move the slider towards <b>most varied</b>, or try <b>Edit these</b> with the same axis.`, more: true};
+  if (v && m && v <= 2 && m <= 2)
+    return {key: 'both_low', text: `Try an axis that names one thing to differ, in a few words, and move the slider down a step.`, less: true};
+  return null;
+}
+
+// Move the slider one rung and repaint it, so a tip button does what it says.
+function nudgeSlider(el, delta) {
+  const oa = el.querySelector('#oa');
+  if (!oa) return;
+  oa.value = Math.max(1, Math.min(LADDER.length, (+oa.value || 1) + delta));
+  oa.oninput();
+  oa.scrollIntoView({behavior: 'smooth', block: 'center'});
+}
+
+function screenAxis() {
+  if (!draft.axis && S.retry_axis) draft.axis = S.retry_axis;
+  if (OFFAXIS && S.retry_off_axis != null) draft.offIdx = rungIndexFor(S.retry_off_axis);
+  const el = $(`<div class="cols left-heavy">
+    <div><div class="card canvas">
+      <p class="eyebrow">What you have now</p>
+      <p class="hint" style="margin:0 0 12px">${TICK_HINT}</p>
+      ${pickGrid(S.iid.images, null, true)}
+      ${S.can_keep ? keepLine() : ''}
+      <div class="row" style="margin-top:12px">${downloadBar()}</div>
+    </div></div>
+    <div><div class="card">
+      ${STUDY.on ? '<p class="eyebrow">Step 3</p>' : ''}
+      ${promptLine(false)}
+      <h2>What should be different from picture to picture?</h2>
+      <p class="lede">Describe your diversity axis request in a few words.</p>
+      <input type="text" id="axis" autofocus class="big"
+             placeholder="describe it in your own words"
+             value="${escapeHtml(draft.axis || S.retry_axis || '')}">
+      <div id="rcard"></div>
+      ${ADD_TO_PROMPT_HINT}
+      <p class="hint" id="sughint" style="margin:16px 0 0"></p>
+      <div id="chips" class="chips"></div>
+      ${S.rejected_axes.length ? `<p class="hint" style="margin-top:12px">Already ruled out:
+        ${S.rejected_axes.map(escapeHtml).join(', ')}</p>` : ''}
+      ${settingsStrip(draft.offIdx, draft.k)}
+      <div class="two">
+        <button class="btn gen regen stack" id="go">
+          <b><span class="ico" aria-hidden="true">&#8635;</span>Generate new</b>
+          <small id="goS">new pictures from your prompt</small>
+        </button>
+        ${S.can_edit ? `<button class="btn edit stack" id="goEdit">
+          <b><span class="ico" aria-hidden="true">&#9998;</span>Edit these</b>
+          <small id="goEditS">edit the pictures on the left</small>
+        </button>` : ''}
+      </div>
+
+    </div></div></div>`);
+  wirePicks(el); wireOffAxis(el); wireK(el); wireSampling(el); wireDownload(el); wirePromptLine(el);
+  // mode: 'generate' makes a set from the prompt; 'edit' edits the original pictures on the left.
+  const use = (axis, source, mode = 'generate', extra = {}) => {
+    const b = withSampling(Object.assign({session_id: S.session_id, axis, source, k: draft.k, mode}, extra));
+    if (OFFAXIS && rung(draft.offIdx)) b.off_axis = rung(draft.offIdx).off_axis;
+    const focus = FOCUS; FOCUS = null;
+    if (mode === 'edit' && focus != null) b.focus = focus;
+    else if (mode === 'edit') { const kp = keepIdx(el, S.iid.images); if (kp) b.keep = kp; }
+    return step('/session/axis', b,
+                focus != null ? `making 4 versions of picture ${focus + 1}` :
+                mode === 'edit' ? `editing ${S.iid.images.length} pictures`
+                                : `generating ${draft.k} pictures`).catch(() => {});
+  };
+  const fire = (mode) => {
+    const v = el.querySelector('#axis').value.trim();
+    // An empty box shows an error.
+    if (!v) {
+      document.getElementById('err').textContent =
+        'Say what should be different — or tap one of the suggestions.';
+      el.querySelector('#axis').focus();
+      return;
+    }
+    draft.axis = v;
+    withRephrase(el.querySelector('#rcard'), v, mode, (axis, source, extra) => use(axis, source, mode, extra), el.querySelector('#axis'));
+  };
+  const relabelAxis = () => {
+    const v = el.querySelector('#axis').value.trim(), q = v ? `“${v}”` : 'it';
+    el.querySelector('#goS').textContent = `from your prompt, varying ${q}`;
+    const es = el.querySelector('#goEditS');
+    if (es) es.textContent = `edit the pictures on the left to vary ${q}`;
+  };
+  el.querySelector('#go').onclick = () => { FOCUS = null; KEEPNOW = false; fire('generate'); };
+  const ge = el.querySelector('#goEdit');
+  if (ge) ge.onclick = () => { FOCUS = null; KEEPNOW = false; fire('edit'); };
+  wireKeep(el, S.iid.images, () => fire('edit'));
+  wireActs(el, (i, ax) => {
+    FOCUS = null; KEEPNOW = false;
+    const b = withSampling({session_id: S.session_id, axis: ax, source: 'free', k: draft.k, mode: 'edit', focus: i});
+    if (OFFAXIS && rung(draft.offIdx)) b.off_axis = rung(draft.offIdx).off_axis;
+    step('/session/axis', b, `making 4 versions of picture ${i + 1}`).catch(() => {});
+  });
+  el.querySelector('#axis').oninput = (e) => {
+    e.target.dataset.dirty = '1'; draft.axis = e.target.value; relabelAxis();
+    REPHRASED = null; el.querySelector('#rcard').innerHTML = '';   // the offer was about the old text
+    liveRephrase(el.querySelector('#rcard'), e.target);
+  };
+  el.querySelector('#axis').onkeydown = (e) => { if (e.key === 'Enter') el.querySelector('#go').click(); };
+  relabelAxis();
+  // A chip fills the box; the user then picks Generate or Edit.
+  repaint = () => paintChips(el, (a) => {
+    const box = el.querySelector('#axis');
+    applyChip(box, a.name, () => { draft.axis = box.value; relabelAxis(); });
+  });
+  repaint();
+  return el;
+}
+
+// Where a round's pictures came from, in words, for the history strip.
+function roundOrigin(t) {
+  const num = (id) => S.trials.findIndex(x => x.trial_id === id) + 1;
+  if (t.restored_from) return ` (back to Round ${t.restored_from_index + 1})`;
+  if (t.merge) {
+    const from = t.layer_of === 'iid' ? 'the original pictures' : `Round ${num(t.layer_of)}`;
+    return ` (4 ways of combining pictures ${(t.merge_indices || []).map(i => i + 1).join(', ')} of ${from})`;
+  }
+  // One picture as the source: "Vary this" and "Make a change".
+  if (t.focus != null) {
+    const from = t.layer_of === 'iid' ? 'the original pictures' : `Round ${num(t.layer_of)}`;
+    return t.fix ? ` (4 attempts at a change to picture ${t.focus + 1} of ${from})`
+                 : ` (4 versions of picture ${t.focus + 1} of ${from})`;
+  }
+  if (t.layer_of === 'iid') return ' (edited from the original pictures)';
+  if (t.edit) return ` (edited from Round ${num(t.layer_of)})`;
+  if (t.layered) return ` (built on Round ${num(t.layer_of)})`;
+  return ' (from your prompt)';
+}
+
+// Earlier rounds, newest first, then the i.i.d. set; each can be restored.
+function historyStrip(cur) {
+  const rows = [];
+  const older = S.trials.slice(0, -1).reverse();
+  older.forEach((t) => {
+    const n = S.trials.indexOf(t) + 1;
+    rows.push(`<div>
+      <div class="lbl"><span>Round ${n} — <b>${escapeHtml(t.axis || '')}</b>${roundOrigin(t)}</span>
+        <button class="back" data-restore="${escapeHtml(t.trial_id)}" data-n="${n}"
+                title="Make Round ${n} the current pictures again. Nothing is deleted.">
+          Go back to these</button></div>
+      <div class="row-imgs">${(t.images || []).map((p, i) =>
+        `<img loading="lazy" src="${media(p, 384)}"
+              title="${escapeHtml((t.prompts || [])[i] || '')}">`).join('')}</div>
+    </div>`);
+  });
+  if (S.iid && S.iid.images && S.iid.images.length) {
+    rows.push(`<div>
+      <div class="lbl"><span>Original pictures — your prompt on its own</span>
+        <button class="back" data-restore="iid" data-n="0"
+                title="Back to the first step, where you can Generate or Edit from these.">
+          Go back to these</button></div>
+      <div class="row-imgs">${S.iid.images.map(p =>
+        `<img loading="lazy" src="${media(p, 384)}">`).join('')}</div>
+    </div>`);
+  }
+  if (!rows.length) return '';
+  return `<div class="card">
+    <h3>Earlier rounds</h3>
+    <p class="hint" style="margin:0 0 10px">Not happy with the latest round? “Go back to
+      these” makes it the current round again (nothing is deleted), so <b>Edit</b> works on it.</p>
+    <div class="hist">${rows.join('')}</div>
+  </div>`;
+}
+
+// Rule 4: left column finishes this set (prompts, ticks, verdict); right column makes the
+// next one.
+function screenReview() {
+  const t = S.trials[S.trials.length - 1];
+  draft.k = t.k || draft.k;
+  // After "Go back to these", the box and slider hold the attempt that was backed out of
+  // (retry_*), so it can be adjusted and tried again from the round returned to.
+  const retryOff = t.retry_off_axis != null ? t.retry_off_axis : t.off_axis;
+  if (OFFAXIS && retryOff != null) draft.offIdx = rungIndexFor(retryOff);
+  const chain = S.trials.filter(x => x.axis === t.axis).length;
+
+  const el = $(`<div class="cols left-heavy">
+    <div><div class="card canvas">
+      <p class="eyebrow">Varying <em>${escapeHtml(t.axis)}</em></p>
+      ${promptLine(true, OFFAXIS && t.seed != null ? t.seed : null)}
+      <p class="lede"><b>Round ${S.trials.length}</b>${roundOrigin(t)} — these ${t.k} vary by
+        <b>${escapeHtml(t.axis)}</b>${chain > 1 ? ` · attempt ${chain}` : ''}.</p>
+      <p class="hint" style="margin:0 0 12px">${TICK_HINT}</p>
+      ${pickGrid(t.images, t.prompts, true)}
+      ${S.can_keep ? keepLine() : ''}
+      <div class="row" style="margin-top:12px">${downloadBar()}</div>
+      ${STUDY.on ? `<div class="finish">
+        <h3 class="q">Happy with these?</h3>
+        <p class="hint">Either answer finishes this picture. To keep going instead, use
+          “Generate new” or “Edit these” on the right.</p>
+        ${STUDY.on ? `
+        <label>Did the pictures vary in the way you asked (<em>${escapeHtml(t.axis)}</em>)?</label>
+        <div class="scale" data-scale="varied">${[1, 2, 3, 4, 5].map(n =>
+          `<button type="button" class="btn" data-v="${n}">${n}</button>`).join('')}
+          <span class="ends">1 = not at all · 5 = exactly</span></div>
+        <label>Do the pictures still match your prompt?</label>
+        <div class="scale" data-scale="matched">${[1, 2, 3, 4, 5].map(n =>
+          `<button type="button" class="btn" data-v="${n}">${n}</button>`).join('')}
+          <span class="ends">1 = not at all · 5 = completely</span></div>` : ''}
+        <label for="rvtext">What worked, or what was missing? <span class="hint">(optional)</span></label>
+        <textarea id="rvtext" rows="3"
+          placeholder="e.g. they varied the right thing, but the dogs all looked the same breed"></textarea>
+        <div id="tip"></div>
+        <div class="row">
+          <button class="btn done" id="acc">Yes — download them</button>
+          <button class="btn" id="rej">No — not what I wanted</button>
+        </div>
+      </div>` : ''}
+    </div></div>
+
+    <div>${historyStrip(t)}<div class="card">
+      <h3 class="q">Or make another set</h3>
+      <div class="field">
+        <label for="axis2">What should differ across the pictures?</label>
+        <input type="text" id="axis2" value="${escapeHtml(t.retry_axis != null ? t.retry_axis : t.axis)}">
+      </div>
+      <div id="rcard2"></div>
+      ${ADD_TO_PROMPT_HINT}
+      <p class="hint" id="sughint" style="margin:0"></p>
+      <div id="chips" class="chips"></div>
+      ${settingsStrip(draft.offIdx, draft.k)}
+      <div class="two">
+        <button class="btn gen regen stack" id="respin">
+          <b><span class="ico" aria-hidden="true">&#8635;</span><span id="respinL">Generate new</span></b>
+          <small id="respinS">new pictures from your prompt</small>
+        </button>
+        <button class="btn edit stack" id="layer">
+          <b><span class="ico" aria-hidden="true">&#9998;</span><span id="layerL">Edit these</span></b>
+          <small id="layerS">change the pictures on the left</small>
+        </button>
+      </div>
+
+    </div></div></div>`);
+
+  wirePicks(el); wireOffAxis(el); wireK(el); wireSampling(el); wireDownload(el); wirePromptLine(el);
+  const boxVal = () => el.querySelector('#axis2').value.trim();
+
+  // Rule 3: both buttons quote the box and update as it changes.
+  relabel = () => {
+    const v = boxVal(), same = v.toLowerCase() === String(t.axis).toLowerCase();
+    const q = v ? `“${v}”` : 'this';
+    const cur = S.trials.length;
+    // Generate = new set from the prompt; Edit = change the pictures on screen.
+    el.querySelector('#respinL').textContent = 'Generate new';
+    el.querySelector('#respinS').textContent = `from your prompt, varying ${q}`;
+    el.querySelector('#layerL').textContent = S.can_edit ? 'Edit these' : 'Build on these';
+    el.querySelector('#layerS').textContent = same
+      ? 'type a different change above first'
+      : `${S.can_edit ? 'edit' : 'redo'} Round ${cur} to vary ${q}`;
+  };
+  relabel();
+
+  // newDraw: force a new seed. By default a slider move keeps the seed, and only a press with
+  // nothing changed takes a new one.
+  const again = (mode, newDraw = false) => {
+    const axis = boxVal();
+    if (!axis) {
+      document.getElementById('err').textContent =
+        'Say what should differ — or tap one of the suggestions.';
+      el.querySelector('#axis2').focus();
+      return;
+    }
+    // Layering always uses the whole set (the policy was trained on sets of K).
+    const send = (ax, source, extra) => {
+      const b = withSampling(Object.assign({session_id: S.session_id, axis: ax, k: draft.k, mode}, extra));
+      if (source === 'rephrased') b.source = source;
+      if (OFFAXIS && rung(draft.offIdx)) b.off_axis = rung(draft.offIdx).off_axis;
+      if (newDraw) b.new_draw = true;
+      const focus = FOCUS; FOCUS = null;
+      if (mode === 'layer' && focus != null) b.focus = focus;
+      else if (mode === 'layer' && S.can_edit) { const kp = keepIdx(el, t.images); if (kp) b.keep = kp; }
+      return step('/session/respin', b,
+                  focus != null ? `making 4 versions of picture ${focus + 1}` :
+                  mode === 'layer' ? `editing ${t.k} pictures` : `generating ${draft.k} pictures`)
+             .catch(() => {});
+    };
+    // The same axis again (a reroll, or a slider change) needs no reading; only new text does.
+    if (axis.toLowerCase() === String(t.axis).toLowerCase()) return send(axis, null, {});
+    return withRephrase(el.querySelector('#rcard2'), axis, mode, send, el.querySelector('#axis2'));
+  };
+  el.querySelectorAll('[data-restore]').forEach((b) => {
+    b.onclick = () => (draft.axis = '', step('/session/restore',
+                           {session_id: S.session_id, trial_id: b.dataset.restore},
+                           b.dataset.n === '0' ? 'going back to the original pictures'
+                                               : `going back to round ${b.dataset.n}`).catch(() => {}));
+  });
+  el.querySelector('#respin').onclick = () => { FOCUS = null; KEEPNOW = false; again('fresh'); };
+  const nd = el.querySelector('#newdraw');
+  if (nd) nd.onclick = () => { FOCUS = null; KEEPNOW = false; again('fresh', true); };
+  el.querySelector('#layer').onclick = () => { FOCUS = null; KEEPNOW = false; again('layer'); };
+  wireKeep(el, t.images, () => again('layer'));
+  wireActs(el, (i, ax) => {
+    FOCUS = null; KEEPNOW = false;
+    const b = withSampling({session_id: S.session_id, axis: ax, k: draft.k, mode: 'layer', focus: i});
+    if (OFFAXIS && rung(draft.offIdx)) b.off_axis = rung(draft.offIdx).off_axis;
+    step('/session/respin', b, `making 4 versions of picture ${i + 1}`).catch(() => {});
+  });
+  el.querySelector('#axis2').oninput = (e) => {
+    e.target.dataset.dirty = '1'; relabel(); REPHRASED = null; el.querySelector('#rcard2').innerHTML = '';
+    liveRephrase(el.querySelector('#rcard2'), e.target, t.axis);
+  };
+
+  // A chip fills the box; the user then picks Generate or Edit.
+  repaint = () => paintChips(el, (a) => {
+    applyChip(el.querySelector('#axis2'), a.name, relabel);
+  });
+  repaint();
+
+  // The comment is sent with the verdict (/session/review stores it on the trial and the
+  // `review` event). Both Yes and No finish the picture.
+  const comment = () => el.querySelector('#rvtext').value.trim() || null;
+  const lock = () => ['#acc', '#rej'].forEach(q => el.querySelector(q).disabled = true);
+  // Study mode: both scales are required (the server also enforces this).
+  const ratings = {};
+  let tipKey = null;
+  const showTip = () => {
+    const tip = feedbackTip(ratings, el.querySelector('#rvtext').value, t.axis);
+    const slot = el.querySelector('#tip');
+    if (!tip) { slot.innerHTML = ''; tipKey = null; return; }
+    if (tip.key === tipKey) return;
+    tipKey = tip.key;
+    slot.innerHTML = `<div class="chipask"><span class="ask-t">${tip.text}</span><span class="ask-b">
+      ${tip.less ? '<button class="btn tiny" data-tip="less">Less variety</button>' : ''}
+      ${tip.more ? '<button class="btn tiny" data-tip="more">More variety</button>' : ''}
+      ${S.can_edit ? '<button class="btn tiny" data-tip="edit">Edit these</button>' : ''}</span></div>`;
+    uiLog('tip_shown', {key: tip.key, ratings: Object.assign({}, ratings)});
+    slot.querySelectorAll('[data-tip]').forEach(b => b.onclick = () => {
+      uiLog('tip_used', {key: tip.key, action: b.dataset.tip});
+      if (b.dataset.tip === 'less') nudgeSlider(el, -1);
+      else if (b.dataset.tip === 'more') nudgeSlider(el, +1);
+      else { const lb = el.querySelector('#layer'); lb.scrollIntoView({behavior: 'smooth', block: 'center'}); lb.focus(); }
+    });
+  };
+  el.querySelectorAll('.scale').forEach(sc => sc.querySelectorAll('button').forEach(b => b.onclick = () => {
+    ratings[sc.dataset.scale] = +b.dataset.v;
+    sc.querySelectorAll('button').forEach(x => x.classList.toggle('gen', x === b));
+    showTip();
+  }));
+  // Outside a study there is no verdict panel.
+  if (!STUDY.on) return el;
+  el.querySelector('#rvtext').oninput = showTip;
+  const rated = () => {
+    if (!STUDY.on || (ratings.varied && ratings.matched)) return true;
+    document.getElementById('err').textContent = 'Please answer both 1–5 questions first.';
+    return false;
+  };
+
+  // Download before /session/review: its repaint would drop the blob mid-save.
+  el.querySelector('#acc').onclick = async () => {
+    if (!rated()) return;
+    const c = comment(); lock();
+    if (!STUDY.on) await downloadOrAll(t.images);
+    await step('/session/review', {session_id: S.session_id, decision: 'accept', comment: c,
+                                   ratings: STUDY.on ? ratings : undefined},
+               'finishing your pictures at full quality');
+  };
+  el.querySelector('#rej').onclick = async () => {
+    if (!rated()) return;
+    const c = comment(); lock();
+    await step('/session/review',
+               {session_id: S.session_id, decision: 'reject', finish: true, comment: c,
+                ratings: STUDY.on ? ratings : undefined},
+               'saving');
+  };
+  return el;
+}
+
+function screenDone() {
+  if (STUDY.on) return screenStudyDone();
+  const t = S.trials.length ? S.trials[S.trials.length - 1] : null;
+  const took = t && t.decision === 'accept';
+  // Feedback is asked here only when there was no review page ("no variety needed").
+  const reviewed = !!(t && t.decision);
+  const el = $(`<div class="card final">
+    <p class="eyebrow">Finished</p>
+    <h2>${took ? 'Here they are' : 'Thanks'}</h2>
+    ${took
+      ? '<p class="lede">Re-made at full quality. Right-click any picture to save it.</p>'
+      : reviewed
+        ? ''
+        : '<p class="lede">You said these outputs did not need more variety — that is a useful answer too.</p>'}
+    ${took ? `<div class="grid k${t.images.length}">${t.images.map(img).join('')}</div>` : ''}
+    <div class="feedback" style="margin-top:22px" ${reviewed ? 'hidden' : ''}>
+      <p class="eyebrow">Optional</p>
+      <p class="lede" style="margin-bottom:8px">How well did this get you the variety you wanted?</p>
+      <div class="row" id="rate">${[1, 2, 3, 4, 5].map(n =>
+        `<button class="btn" data-r="${n}">${n}</button>`).join('')}
+        <span class="hint">1 = not at all, 5 = exactly</span></div>
+      <textarea id="fbtext" rows="3" style="width:100%;margin-top:10px;box-sizing:border-box"
+        placeholder="Anything that worked well, was confusing, or that you wished it did?"></textarea>
+      <div class="row" style="margin-top:8px">
+        <button class="btn" id="fbsend">Send feedback</button>
+        <span class="hint" id="fbmsg"></span>
+      </div>
+    </div>
+    <div class="row" style="margin-top:20px">
+      <button class="btn gen" id="again">Start another picture</button>
+    </div>
+  </div>`);
+  let rating = null;
+  el.querySelectorAll('#rate button').forEach(b => b.onclick = () => {
+    rating = +b.dataset.r;
+    el.querySelectorAll('#rate button').forEach(x => x.classList.toggle('gen', x === b));
+  });
+  el.querySelector('#fbsend').onclick = async () => {
+    const text = el.querySelector('#fbtext').value.trim();
+    if (rating == null && !text) { el.querySelector('#fbmsg').textContent = 'Pick a number or write something first.'; return; }
+    try {
+      const r = await fetch('session/feedback', {method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({session_id: S.session_id, rating, text})});
+      if (!r.ok) throw new Error((await r.json()).error || r.statusText);
+      el.querySelector('#fbsend').disabled = true;
+      el.querySelector('#fbmsg').textContent = 'Thank you — saved.';
+    } catch (e) { el.querySelector('#fbmsg').textContent = 'Could not save: ' + e.message; }
+  };
+  el.querySelector('#again').onclick = () => start();
+  return el;
+}
+
+// ---------------------------------------------------------------- study mode
+
+// One finished session is one picture, counted once per session id.
+function screenStudyDone() {
+  // Only a varied picture counts: "No, these are fine" is recorded but yields no axis.
+  const varied = S.needs_diversity !== false;
+  if (store.get('axis_study_last') !== S.session_id) {
+    store.set('axis_study_last', S.session_id);
+    if (varied) store.set(doneKey(), String(picturesDone() + 1));
+    uiLog('study_picture_done', {done: picturesDone(), of: STUDY.pictures, counted: varied});
+  }
+  const done = picturesDone(), left = STUDY.pictures - done;
+  if (left <= 0) return screenQuestionnaire();
+  if (!varied) {
+    const el0 = $(`<div class="card narrow final">
+      <p class="eyebrow">Recorded</p>
+      <h2>Thank you — that answer is saved</h2>
+      <p class="lede">A set you accepted as it is does <b>not count</b> towards your ${STUDY.pictures}
+        sets. You still have <b>${left}</b> to do for which you ask for variety. Please try a
+        different prompt.</p>
+      <div class="row" style="margin-top:20px">
+        <button class="btn gen" id="again">Next set (${done + 1} of ${STUDY.pictures})</button>
+      </div></div>`);
+    el0.querySelector('#again').onclick = () => start();
+    return el0;
+  }
+  const el = $(`<div class="card narrow final">
+    <p class="eyebrow">Set ${done} of ${STUDY.pictures} finished</p>
+    <h2>Thank you — ${left} more to go</h2>
+    <p class="lede">For the next one, please use a <b>different prompt</b> and think about what
+      you would like to vary this time.</p>
+    <div class="row" style="margin-top:20px">
+      <button class="btn gen" id="again">Next set (${done + 1} of ${STUDY.pictures})</button>
+    </div></div>`);
+  el.querySelector('#again').onclick = () => start();
+  return el;
+}
+
+const SCALE = (name, lo, hi) => `<div class="scale" data-q="${name}">${[1, 2, 3, 4, 5].map(n =>
+  `<button type="button" class="btn" data-v="${n}">${n}</button>`).join('')}
+  <span class="ends">1 = ${lo} · 5 = ${hi}</span></div>`;
+
+function screenQuestionnaire(returning = false) {
+  const sug = store.get('axis_study_suggestions_' + STUDY_SCOPE + '_' + PID) !== 'off';
+  const el = $(`<div class="card narrow qn">
+    <p class="eyebrow">Last step</p>
+    <h2>A few questions about the whole experience</h2>
+    <label class="q">How useful was it to say <em>what</em> should vary, compared with simply getting four images?</label>
+    ${SCALE('control_useful', 'not useful', 'very useful')}
+    <label class="q">When you moved the variety slider, did the result change the way you expected?</label>
+    ${SCALE('slider_expected', 'not at all', 'exactly')}
+    <label class="q" for="q_mode">“Generate new” makes a new set; “Edit these” changes the images you already have. Which did you prefer?</label>
+    <select id="q_mode"><option value="">— choose —</option><option>Generate new</option><option>Edit these</option>
+      <option>Both, for different things</option><option>No preference</option><option>I only used one of them</option></select>
+    ${sug ? `<label class="q" for="q_sug">The system suggested things to vary. How did you use the suggestions?</label>
+    <select id="q_sug"><option value="">— choose —</option><option>Mostly used the suggestions</option>
+      <option>Mostly wrote my own</option><option>A mix of both</option><option>I did not notice them</option></select>
+    <label class="q">How useful were the suggestions?</label>
+    ${SCALE('suggestions_useful', 'not useful', 'very useful')}` : ''}
+    <label class="q" for="q_exp">How often do you use AI image generators?</label>
+    <select id="q_exp"><option value="">— choose —</option><option>Never before today</option>
+      <option>A few times</option><option>Monthly</option><option>Weekly or more</option></select>
+    <label class="q" for="q_missing">Was there something you wanted to vary that the tool could not do? Please describe it.</label>
+    <textarea id="q_missing" rows="3"></textarea>
+    <label class="q">Did you enjoy this task?</label>
+    ${SCALE('enjoyed', 'not at all', 'very much')}
+    <label class="q" for="q_more">Would you like to be invited to a follow-up study?</label>
+    <select id="q_more"><option value="">— choose —</option><option>Yes</option><option>Maybe</option><option>No</option></select>
+    <label class="q" for="q_other">Anything else? <span class="hint">(optional)</span></label>
+    <textarea id="q_other" rows="2"></textarea>
+    <div class="row" style="margin-top:18px">
+      <button class="btn gen" id="qsend">Submit and get my completion code</button>
+      <span class="hint" id="qmsg"></span>
+    </div>
+    ${returning && !PROLIFIC.session_id ? `<p class="hint" style="margin-top:16px">Already submitted this questionnaire and want to do more?
+      <button type="button" class="btn tiny ghost" id="qnewround">Start another round (${STUDY.pictures} sets)</button></p>` : ''}
+    </div>`);
+  const nr = el.querySelector('#qnewround');
+  if (nr) nr.onclick = () => {
+    store.set(roundKey(), String(studyRound() + 1));
+    uiLog('study_new_round', {round: studyRound(), from: 'questionnaire'});
+    start();
+  };
+  const ans = {};
+  el.querySelectorAll('.scale').forEach(sc => sc.querySelectorAll('button').forEach(b => b.onclick = () => {
+    ans[sc.dataset.q] = +b.dataset.v;
+    sc.querySelectorAll('button').forEach(x => x.classList.toggle('gen', x === b));
+  }));
+  el.querySelector('#qsend').onclick = async () => {
+    const v = (q) => (el.querySelector(q) ? el.querySelector(q).value.trim() : '');
+    Object.assign(ans, {mode_preference: v('#q_mode'),
+                        experience: v('#q_exp'), missing: v('#q_missing'), other: v('#q_other'),
+                        more_invite: v('#q_more')});
+    // Require the suggestion answers only when those questions are on the page: whether they are
+    // is decided when the questionnaire is drawn, and the stored arm flag can be absent or stale.
+    const askedSug = !!el.querySelector('#q_sug');
+    if (askedSug) ans.suggestions_use = v('#q_sug');
+    const need = ['control_useful', 'slider_expected', 'mode_preference', 'experience', 'missing', 'enjoyed', 'more_invite']
+      .concat(askedSug ? ['suggestions_use', 'suggestions_useful'] : []);
+    const miss = need.filter(k => ans[k] == null || ans[k] === '');
+    if (miss.length) { el.querySelector('#qmsg').textContent = 'Please answer every question (the last one is optional).'; return; }
+    try {
+      const r = await fetch('study/questionnaire', {method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({user_id: PID, client_id: CLIENT_ID, prolific: PROLIFIC,
+                              pictures_done: picturesDone(), answers: Object.assign({study_round: studyRound()}, ans)})});
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || r.statusText);
+      store.set(finishedKey(), JSON.stringify({completion_code: j.completion_code || '', completion_url: j.completion_url || ''}));
+      document.getElementById('app').replaceChildren(screenCompletion(j));
+    } catch (e) { el.querySelector('#qmsg').textContent = 'Could not save: ' + e.message; }
+  };
+  return el;
+}
+
+function screenCompletion(j, again = false) {
+  const el = $(`<div class="card narrow final">
+    <p class="eyebrow">Finished${studyRound() ? ` · round ${studyRound() + 1}` : ''}</p>
+    <h2>${again ? 'You have already finished this round' : 'Thank you — you are done'}</h2>
+    ${j.completion_code
+      ? `<p class="lede">Your completion code:</p><div class="code">${escapeHtml(j.completion_code)}</div>
+         <p><a class="btn gen" href="${escapeHtml(j.completion_url)}">Return to Prolific</a></p>`
+      : '<p class="lede">Your answers are saved. (No completion code is configured for this run.)</p>'}
+    ${PROLIFIC.session_id
+      ? `<p class="lede" style="margin-top:22px">Want to do more? If the study is still open to you on
+           Prolific, start a new submission there; it opens a fresh round here.</p>`
+      : `<p class="lede" style="margin-top:22px">Want to do more? You can start another round of
+           ${STUDY.pictures} sets with new prompts, then answer the short questionnaire again.</p>
+         <div class="row"><button class="btn" id="newround">Start another round (${STUDY.pictures} sets)</button></div>`}
+  </div>`);
+  const nb = el.querySelector('#newround');
+  if (nb) nb.onclick = () => {
+    store.set(roundKey(), String(studyRound() + 1));
+    uiLog('study_new_round', {round: studyRound()});
+    start();
+  };
+  return el;
+}
+
+// The consent page text without the checkbox. Fetched on each open; opening is logged.
+async function openHelp() {
+  const box = document.getElementById('help'), body = document.getElementById('helpbody');
+  try {
+    body.innerHTML = (await (await fetch('study/instructions')).text())
+      .replaceAll('{N}', String(STUDY.pictures)).replaceAll('{MODEL_NOTE}', modelNote());
+  } catch (e) { body.textContent = 'The instructions could not be loaded. Please try again.'; }
+  box.classList.add('on'); box.scrollTop = 0;
+  uiLog('instructions_opened', {state: S ? S.state : null});
+}
+function closeHelp() {
+  const box = document.getElementById('help');
+  if (!box.classList.contains('on')) return;
+  box.classList.remove('on');
+  uiLog('instructions_closed', {});
+}
+document.getElementById('helpbtn').onclick = openHelp;
+document.getElementById('helpx').onclick = closeHelp;
+document.getElementById('help').onclick = (e) => { if (e.target.id === 'help') closeHelp(); };
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeHelp(); });
+
+async function screenConsent() {
+  const app = document.getElementById('app');
+  let html = '';
+  try { html = await (await fetch('study/instructions')).text(); } catch (e) { html = '<p>Instructions could not be loaded. Please reload.</p>'; }
+  html = html.replaceAll('{N}', String(STUDY.pictures)).replaceAll('{MODEL_NOTE}', modelNote());
+  const el = $(`<div class="card study-doc">${html}
+    <div class="row" style="margin-top:22px">
+      <label><input type="checkbox" id="agree"> I have read these instructions, I understand that
+        low-quality submissions are rejected, and I agree to take part.</label></div>
+    <div class="row" style="margin-top:12px"><button class="btn gen" id="cgo" disabled>Start</button></div></div>`);
+  const version = (el.querySelector('[data-version]') || {dataset: {}}).dataset.version || '';
+  el.querySelector('#agree').onchange = (e) => { el.querySelector('#cgo').disabled = !e.target.checked; };
+  el.querySelector('#cgo').onclick = async () => {
+    store.set('axis_study_consent_' + STUDY_SCOPE + '_' + PID, version || 'yes');
+    try { await fetch('study/consent', {method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({user_id: PID, client_id: CLIENT_ID, prolific: PROLIFIC, agreed: true, version})}); } catch (e) {}
+    start();
+  };
+  app.replaceChildren(el);
+  window.scrollTo({top: 0});
+}
+
+// ---------------------------------------------------------------- shell
+
+const STEPS = [['START', 'Prompt'], ['GATE', 'Look'], ['CHOOSE_AXIS', 'What varies'],
+               ['REVIEW', 'Review']];
+
+function paintSteps() {
+  const box = document.getElementById('steps');
+  if (!S) { box.innerHTML = ''; return; }
+  // The "Look" step is skipped outside a study.
+  const steps = STUDY.on ? STEPS : STEPS.filter(([k]) => k !== 'GATE');
+  const at = steps.findIndex(([k]) => k === S.state);
+  box.innerHTML = steps.map(([k, label], i) => {
+    const cls = S.state === 'DONE' ? 'done' : i === at ? 'now' : i < at ? 'done' : '';
+    return `<span class="step ${cls}">${i + 1}. ${label}</span>`;
+  }).join('');
+}
+
+let shownState = null;
+
+function render() {
+  const app = document.getElementById('app');
+  app.className = busy ? 'busy' : '';
+  // Reset the screen's chip painter, relabeller and poll before the early return: start()
+  // renders with S = null.
+  repaint = null; relabel = null;
+  clearInterval(pollTimer);
+  pollTimer = null;
+  paintSteps();
+  if (!S) return;
+  const by = {START: screenStart, GATE: screenGate, CHOOSE_AXIS: screenAxis,
+              REVIEW: screenReview, DONE: screenDone};
+  // #err lives outside #app, so clear it whenever the state changes.
+  if (S.state !== shownState) {
+    document.getElementById('err').textContent = '';
+    uiLog('screen', {from: shownState, to: S.state});
+  }
+  // If a screen throws, report it and show an error instead of leaving the old screen up.
+  let el;
+  try {
+    el = (by[S.state] || screenStart)();
+  } catch (e) {
+    reportClientError(e, 'render:' + S.state);
+    document.getElementById('err').textContent =
+      `This screen failed to draw (${S.state}): ${(e && e.message) || e}\n` +
+      `The error has been logged. Your session is safe — reload the page to continue.`;
+    shownState = null;
+    return;
+  }
+  shownState = S.state;
+  app.replaceChildren(el);
+  window.scrollTo({top: 0, behavior: 'smooth'});
+  syncPoll();
+}
+
+// Send client-side failures to the run's event log. Best-effort: never throws.
+function reportClientError(e, screen) {
+  try {
+    fetch('client_error', {method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        session_id: (S && S.session_id) || null,
+        client_state: (S && S.state) || null,
+        screen: screen || null,
+        message: String((e && e.message) || e),
+        stack: String((e && e.stack) || ''),
+        url: location.href})}).catch(() => {});
+  } catch (_) { /* nothing useful left to do */ }
+}
+
+window.addEventListener('error', (ev) => reportClientError(ev.error || ev.message, 'window'));
+window.addEventListener('unhandledrejection',
+  (ev) => reportClientError(ev.reason, 'promise'));
+
+// /models gives the run's T2I model (there is no picker; see the top of this file).
+async function loadModels() {
+  try {
+    const j = await (await fetch('models')).json();
+    MODELS = j.models || [];
+    const usable = MODELS.filter(m => m.available !== false);
+    if (!MODEL || !usable.some(m => m.key === MODEL))
+      MODEL = (usable.find(m => m.key === j.default) || usable[0] || {}).key;
+  } catch (e) { MODELS = []; }
+}
+
+async function loadCached() {
+  try {
+    const j = await (await fetch('prompts?model=' + encodeURIComponent(MODEL))).json();
+    CACHED = j.prompts || [];
+  } catch (e) { CACHED = []; }
+}
+
+// The ladder is fixed for the run, so it is fetched once.
+async function loadLadder() {
+  try {
+    const j = await (await fetch('loras')).json();
+    OFFAXIS = !!j.enabled;
+    OFFAXIS_WHY = j.why;
+    LADDER = (j.ladder || []).filter(r => r.available);
+    if (j.default_off_axis != null) OFFAXIS_DEFAULT = j.default_off_axis;
+    if (!LADDER.length) { OFFAXIS = false; OFFAXIS_WHY = OFFAXIS_WHY || 'no adapters exported'; }
+    draft.offIdx = rungIndexFor(OFFAXIS_DEFAULT);
+  } catch (e) { OFFAXIS = false; LADDER = []; }
+}
+
+// ---------------------------------------------------------------- study record
+// Participant id and client-side UI events (clicks, changes, tab visibility, page leave).
+// State changes are already logged server-side.
+
+const store = {
+  get: (k) => { try { return localStorage.getItem(k); } catch (_) { return null; } },
+  set: (k, v) => { try { localStorage.setItem(k, v); } catch (_) { /* private window */ } },
+};
+const CLIENT_ID = store.get('axis_client_id') || (() => {
+  const v = (self.crypto && crypto.randomUUID) ? crypto.randomUUID()
+                                               : 'c' + Math.random().toString(36).slice(2);
+  store.set('axis_client_id', v);
+  return v;
+})();
+// Participant id from the link: `pid` or Prolific's PROLIFIC_PID. Prolific's STUDY_ID and
+// SESSION_ID are sent with every session.
+const QS = new URLSearchParams(location.search);
+const URL_PID = QS.get('pid') || QS.get('PROLIFIC_PID');
+const PROLIFIC = {study_id: QS.get('STUDY_ID'), session_id: QS.get('SESSION_ID')};
+// Study mode (orchestrator --study-pictures N), read from /health: N pictures, a rating on
+// every finished set, a questionnaire, then the completion code. Progress is kept per
+// participant in localStorage.
+let STUDY = {on: false, pictures: 0, suggestions: 'on'};
+// Progress keys are scoped per study: site path (/axis, /qwen, ...), Prolific STUDY_ID, and
+// the server's run name (added from /health), since all sites share one origin.
+// Bump STUDY_RESET to reset every participant's set counter, consent and suggestions setting.
+const STUDY_RESET = '2026-09-25b';
+let STUDY_SCOPE = (location.pathname.split('/').filter(Boolean)[0] || 'root') +
+                  (PROLIFIC.study_id ? ':' + PROLIFIC.study_id : '');
+// Rounds: a participant may repeat the study. Each round has its own set counter and
+// questionnaire; consent and the suggestions arm stay per study. Round 0 has no suffix. A
+// Prolific SESSION_ID (one per submission) also starts a fresh counter.
+const roundKey = () => 'axis_study_round_' + STUDY_SCOPE + '_' + (PID || '');
+const studyRound = () => +(store.get(roundKey()) || 0);
+const doneKey = () => 'axis_study_done_' + STUDY_SCOPE + '_' + (PID || '') +
+                      (studyRound() ? '_r' + studyRound() : '') +
+                      (PROLIFIC.session_id ? ':' + PROLIFIC.session_id : '');
+const finishedKey = () => doneKey() + '_code';     // set once this round's questionnaire is saved
+const picturesDone = () => +(store.get(doneKey()) || 0);
+if (URL_PID) store.set('axis_pid', URL_PID.trim().slice(0, 120));
+let PID = store.get('axis_pid');
+let ASK_PID = false;
+
+const UIQ = [];
+function uiLog(name, detail) {
+  UIQ.push(Object.assign({t: Date.now(), name, state: (S && S.state) || null,
+                          trials: (S && S.trials) ? S.trials.length : null}, detail || {}));
+  if (UIQ.length >= 50) flushUI();
+}
+function flushUI(leaving) {
+  if (!UIQ.length) return;
+  const body = JSON.stringify({session_id: (S && S.session_id) || null, client_id: CLIENT_ID,
+                               events: UIQ.splice(0)});
+  try {
+    if (leaving && navigator.sendBeacon &&
+        navigator.sendBeacon('client_event', new Blob([body], {type: 'application/json'}))) return;
+    fetch('client_event', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                           body, keepalive: true}).catch(() => {});
+  } catch (_) { /* best-effort */ }
+}
+setInterval(flushUI, 5000);
+document.addEventListener('visibilitychange', () => {
+  uiLog(document.hidden ? 'tab_hidden' : 'tab_visible');
+  if (document.hidden) flushUI(true);
+});
+window.addEventListener('pagehide', () => { uiLog('page_leave'); flushUI(true); });
+document.addEventListener('click', (e) => {
+  const b = e.target.closest && e.target.closest('button, .chip, img, a, summary, label, input');
+  if (!b) return;
+  const src = b.tagName === 'IMG' ? decodeURIComponent((b.getAttribute('src') || '')
+                                      .replace(/^media\?path=/, '')).slice(-200) : undefined;
+  uiLog('click', {tag: b.tagName.toLowerCase(), id: b.id || null,
+                  cls: String(b.className || '').slice(0, 80) || null,
+                  text: (b.innerText || b.value || '').trim().replace(/\s+/g, ' ').slice(0, 120) || null,
+                  data: Object.keys(b.dataset || {}).length ? Object.assign({}, b.dataset) : null,
+                  src});
+}, true);
+document.addEventListener('change', (e) => {
+  const x = e.target;
+  if (!x.matches || !x.matches('input, select, textarea')) return;
+  uiLog('change', {id: x.id || null, type: x.type || x.tagName.toLowerCase(),
+                   value: x.type === 'checkbox' ? x.checked : String(x.value).slice(0, 500)});
+}, true);
+
+function screenParticipant() {
+  const app = document.getElementById('app');
+  const el = $(`<div class="card narrow">
+    <p class="eyebrow">Welcome</p>
+    <h2>Before you start</h2>
+    <p class="lede">${STUDY.on
+      ? 'Please enter your <b>Prolific ID</b>. It is saved with what you do here, so your submission can be matched to you and approved.'
+      : 'Please enter the name or participant ID you were given. It is saved with what you do here, so your sessions can be matched to you.'}</p>
+    <input type="text" id="pid" class="big" autofocus placeholder="${STUDY.on ? 'your Prolific ID' : 'name or participant ID'}">
+    <div class="row" style="margin-top:14px">
+      <button class="btn gen" id="pidgo">Continue</button>
+    </div>
+  </div>`);
+  const go = () => {
+    const v = el.querySelector('#pid').value.trim().slice(0, 120);
+    if (!v || (STUDY.on && !/^[A-Za-z0-9]{12,40}$/.test(v))) {
+      if (STUDY.on) document.getElementById('err').textContent =
+        'That does not look like a Prolific ID (24 letters and digits). Please check it.';
+      el.querySelector('#pid').focus(); return;
+    }
+    document.getElementById('err').textContent = '';
+    PID = v; store.set('axis_pid', v);
+    uiLog('participant_entered', {participant_id: v});
+    start();
+  };
+  el.querySelector('#pidgo').onclick = go;
+  el.querySelector('#pid').onkeydown = (e) => { if (e.key === 'Enter') go(); };
+  app.replaceChildren(el);
+}
+
+async function start() {
+  S = null; SEL.clear(); draft.axis = ''; render();
+  if (ASK_PID && !PID) { screenParticipant(); return; }
+  if (STUDY.on && !store.get('axis_study_consent_' + STUDY_SCOPE + '_' + PID)) { await screenConsent(); return; }
+  if (STUDY.on && picturesDone() >= STUDY.pictures) {
+    const fin = store.get(finishedKey());
+    document.getElementById('app').replaceChildren(fin ? screenCompletion(JSON.parse(fin), true) : screenQuestionnaire(true));
+    return;
+  }
+  if (!MODELS.length) await loadModels();
+  await loadCached();
+  const r = await fetch('session/new', {method:'POST', headers:{'Content-Type':'application/json'},
+                                         body: JSON.stringify({model: MODEL, user_id: PID,
+                                           client_id: CLIENT_ID, prolific: PROLIFIC,
+                                           study_picture: STUDY.on ? picturesDone() + 1 : undefined,
+                                           screen: `${innerWidth}x${innerHeight}`})});
+  S = await r.json();
+  if (STUDY.on && S.suggestions) store.set('axis_study_suggestions_' + STUDY_SCOPE + '_' + PID, S.suggestions);
+  uiLog('session_start', {participant_id: PID});
+  render();
+}
+
+(async () => {
+  try {
+    const h = await (await fetch('health')).json();
+    NIID = h.n_iid || NIID; K = h.k || K;
+    ASK_PID = !!h.ask_participant;
+    if (h.study && h.study.on) STUDY = h.study;
+    if (h.run) STUDY_SCOPE += '@' + h.run;
+    STUDY_SCOPE += '#' + STUDY_RESET;
+    document.getElementById('helpbtn').hidden = !STUDY.on;
+    KCHOICES = h.k_choices || [K]; KTRAINED = h.k_trained || K;
+    draft.k = SHOW_K_CHOICE ? (KCHOICES.includes(K) ? K : KCHOICES[0]) : KTRAINED;
+  } catch (e) { /* defaults are fine */ }
+  await loadLadder();
+  await loadModels();
+  await start();
+})();
+</script>

@@ -1,0 +1,19 @@
+# Data, outputs and weights live outside version control (see README, Environment variables).
+runs/
+data/
+models/
+axis_framework/adapters/
+axis_framework/cache/
+axis_framework/logs/
+.cache/
+.venv*/
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+
+# Local settings and secrets
+.env

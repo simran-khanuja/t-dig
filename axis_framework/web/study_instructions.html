@@ -1,0 +1,28 @@
+<!-- Consent and instructions shown once per participant in study mode (orchestrator --study-pictures N).
+     Template: replace it with your study's information sheet and consent text, as approved by your
+     ethics board. Plain HTML fragment. {N} becomes the number of image sets per participant,
+     {MODEL_NOTE} the per-site T2I model note (web/index.html, modelNote). Update data-version when the
+     text changes: it is written to the event log with each consent. -->
+<div data-version="template-1">
+  <h2>Before you start</h2>
+  <p class="lede">Please read this page. You can open it again at any time with the <b>Instructions</b>
+    button at the top of every screen.</p>
+
+  <h3>What you will do</h3>
+  {MODEL_NOTE}
+  <p>You will make <b>{N} sets of images</b>. For each set:</p>
+  <ol>
+    <li>Write a prompt describing an image you would like to see, and look at the four images the
+      system makes for it.</li>
+    <li>If you would like more variety, say in your own words what should differ between the images
+      (the <i>axis</i>, for example &ldquo;dog breed&rdquo; or &ldquo;time of day&rdquo;). Choose
+      <b>Generate new</b> for a fresh set that varies in that way, or <b>Edit these</b> to keep the
+      current images and add the variation. The slider asks for more or less variety.</li>
+    <li>Rate the result: did the images vary in the way you asked, and do they still match your prompt?</li>
+  </ol>
+  <p>At the end there is a short questionnaire.</p>
+
+  <h3>What an axis is</h3>
+  <p>An axis names one thing that should be different from image to image, while everything else in your
+    prompt stays the same. Put anything that all images should show into the prompt, not the axis.</p>
+</div>

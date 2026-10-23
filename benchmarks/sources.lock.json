@@ -1,0 +1,34 @@
+{
+  "pag-lexica": {
+    "repository": "https://github.com/dbsxodud-11/PAG",
+    "revision": "d5f6ba2d2e896fb4be0660f8a2f1bacf3e5d5608",
+    "path": "prompts/eval_prompt_lexica.jsonl",
+    "url": "https://raw.githubusercontent.com/dbsxodud-11/PAG/d5f6ba2d2e896fb4be0660f8a2f1bacf3e5d5608/prompts/eval_prompt_lexica.jsonl",
+    "sha256": "dd6bd8f1a72c0039ac32a54c8ca2f7e4ad2be962302b5c8cfdc0489a62ca52c3",
+    "count": 64
+  },
+  "pag-diffusiondb": {
+    "repository": "https://github.com/dbsxodud-11/PAG",
+    "revision": "d5f6ba2d2e896fb4be0660f8a2f1bacf3e5d5608",
+    "path": "prompts/eval_prompt_diffusiondb.jsonl",
+    "url": "https://raw.githubusercontent.com/dbsxodud-11/PAG/d5f6ba2d2e896fb4be0660f8a2f1bacf3e5d5608/prompts/eval_prompt_diffusiondb.jsonl",
+    "sha256": "ce8b20a5ff2de00428368e470ed890cad7d7372dd9ae5489f37739631128ae15",
+    "count": 256
+  },
+  "pag-coco": {
+    "repository": "https://github.com/dbsxodud-11/PAG",
+    "revision": "d5f6ba2d2e896fb4be0660f8a2f1bacf3e5d5608",
+    "path": "prompts/eval_prompt_coco.jsonl",
+    "url": "https://raw.githubusercontent.com/dbsxodud-11/PAG/d5f6ba2d2e896fb4be0660f8a2f1bacf3e5d5608/prompts/eval_prompt_coco.jsonl",
+    "sha256": "0d4a589163c5a5a9364ba825ab97af84db9a5658188f9deb05084da4ebfe69eb",
+    "count": 256
+  },
+  "pag-chatgpt": {
+    "repository": "https://github.com/dbsxodud-11/PAG",
+    "revision": "d5f6ba2d2e896fb4be0660f8a2f1bacf3e5d5608",
+    "path": "prompts/eval_prompt_chatgpt.jsonl",
+    "url": "https://raw.githubusercontent.com/dbsxodud-11/PAG/d5f6ba2d2e896fb4be0660f8a2f1bacf3e5d5608/prompts/eval_prompt_chatgpt.jsonl",
+    "sha256": "4a4d3fcb8687641dc257a6dbecd98159f1733459ad4d573b3db4a15f220a17c5",
+    "count": 64
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "versions": {
+    "verl": "0.9.0.dev0",
+    "torch": "2.11.0+cu129",
+    "vllm": "0.24.0+cu129",
+    "transformers": "5.14.1",
+    "ray": "2.57.0",
+    "torchdata": "0.11.0"
+  },
+  "framework_files": {
+    "trainer/main_ppo.py": "d72ae917f68bb436978fb490eabe0a8ec63c01f0b3d8cf02f59b2969415a2971",
+    "trainer/ppo/v1/trainer_base.py": "93be2236c1413808450137c55952eb0bfbff142af36f7cc20aa89bc1a1e051f5",
+    "trainer/ppo/v1/trainer_sync.py": "82080d57eff0530ba69cd14a0353ef4b6a6bcfa4eaf45540d6a091cbc679ef82",
+    "trainer/ppo/v1/replay_buffer.py": "0486c40ec8622b2d8a81d50b65ed04d36e7f7dbbc8bf29f13086dffd3b45a082",
+    "experimental/reward_loop/reward_manager/naive.py": "85a7a6872e2c9684c1252393755c8fe39d8fdf9393608c98cacd025821ba1d51"
+  }
+}
