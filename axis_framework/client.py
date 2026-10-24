@@ -131,6 +131,7 @@ class T2IClient:
         guidance_scale=None,
         resolution=None,
         index_offset=None,
+        seed=None,
     ):
         """Apply instruction i to image i (t2i_server.route_edit)."""
         body = {
@@ -145,6 +146,7 @@ class T2IClient:
             ("guidance_scale", guidance_scale),
             ("resolution", resolution),
             ("index_offset", index_offset),
+            ("seed", seed),
         ):
             if v is not None:
                 body[k] = v

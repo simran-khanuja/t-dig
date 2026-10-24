@@ -2,7 +2,7 @@
 
     POST /render {prompts, base_prompt, model, guidance_scale, init_diversity, steps,
                   index_offset, n_total, ...}          -> {images: [path], seed, ...}
-    POST /edit   {sources, instructions, model, steps, guidance_scale, resolution,
+    POST /edit   {sources, instructions, model, steps, guidance_scale, resolution, seed,
                   out_dir, tag}                        -> {images: [path], ...}
     POST /audit  {images, prompts, base_prompt, axis} -> the metrics the study logs
     GET  /models -> the T2I models this server may load, and their capabilities
@@ -448,13 +448,19 @@ def route_edit(p):
     steps = int(p.get("steps", ed["steps"]))
     guidance = float(p.get("guidance_scale", ed["guidance"]))
     resolution = int(p.get("resolution", ed["resolution"]))
+    # The request's `seed`, else the training seed of `base_prompt`, as for /render.
+    seed = (
+        int(p["seed"])
+        if p.get("seed") is not None
+        else _STATE["seed_for"](str(p.get("base_prompt") or ""))
+    )
     out_dir = p.get("out_dir") or os.path.join(config.RUNS, "adhoc")
     os.makedirs(out_dir, exist_ok=True)
     tag = p.get("tag") or f"e{int(time.time())}"
 
     t0 = time.time()
     if _STATE["fake"]:
-        paths = _fake_images(instructions, out_dir, tag, resolution, 0)
+        paths = _fake_images(instructions, out_dir, tag, resolution, int(p.get("index_offset") or 0))
     else:
         rs = _STATE["rs"]
         fam = _model_spec(model)["family"]
@@ -472,7 +478,7 @@ def route_edit(p):
             }
             if ed.get("strength") is not None:
                 view["edit_strength"] = float(ed["strength"])
-            images = rs.edit_images(sources, instructions, view)
+            images = rs.edit_images(sources, instructions, view, seed)
         # `index_offset` is set when the orchestrator shards edits (orchestrator._edit_grid);
         # file indices stay the source's grid index.
         off = int(p.get("index_offset") or 0)
@@ -490,6 +496,7 @@ def route_edit(p):
         "steps": steps,
         "guidance_scale": guidance,
         "resolution": resolution,
+        "seed": seed,
         "task": "edit",
         "model_path": _STATE["cfg"]["model_path"],
         "model_family": _STATE["cfg"]["model_family"],

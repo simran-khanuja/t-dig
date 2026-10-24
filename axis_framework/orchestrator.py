@@ -197,7 +197,7 @@ def _render_grid(model, prompts, base_prompt, out_dir, tag, seed=None, **kw):
     return out
 
 
-def _edit_grid(model, sources, instructions, out_dir, tag):
+def _edit_grid(model, sources, instructions, out_dir, tag, seed):
     """Apply K edits, split across the replica pool as _render_grid does for K prompts.
 
     Each edit is its own pipeline call (~10 s for four 1024px edits on one server). Writes
@@ -206,7 +206,12 @@ def _edit_grid(model, sources, instructions, out_dir, tag):
     pool = _pool_for(model)
     if len(pool) < 2 or len(sources) < 2:
         return _render_for(model).edit(
-            sources=sources, instructions=instructions, out_dir=out_dir, tag=tag, model=model
+            sources=sources,
+            instructions=instructions,
+            out_dir=out_dir,
+            tag=tag,
+            model=model,
+            seed=seed,
         )
     cuts = _shards(len(sources), len(pool))
     t0 = time.time()
@@ -220,6 +225,7 @@ def _edit_grid(model, sources, instructions, out_dir, tag):
             tag=tag,
             model=model,
             index_offset=lo,
+            seed=seed,
         )
 
     with ThreadPoolExecutor(max_workers=len(cuts)) as ex:
@@ -1393,9 +1399,10 @@ def _render_trial(s, t, guidance_scale, init_diversity, steps, resolution, why, 
         keep = set(t.get("keep") or [])
         srcs, ins = list(t["source_images"]), list(t["instructions"])
         todo = [i for i in range(len(srcs)) if i not in keep]
+        seed = _seed_for(s["base_prompt"])
         if todo and len(todo) < len(srcs):
             r = _edit_grid(
-                model, [srcs[i] for i in todo], [ins[i] for i in todo], _session_dir(s), tag
+                model, [srcs[i] for i in todo], [ins[i] for i in todo], _session_dir(s), tag, seed
             )
             got = iter(r["images"])
             r["images"] = [srcs[i] if i in keep else next(got) for i in range(len(srcs))]
@@ -1403,11 +1410,13 @@ def _render_trial(s, t, guidance_scale, init_diversity, steps, resolution, why, 
         elif not todo:
             raise HttpError(400, "every picture is marked to keep -- unselect one to edit it")
         else:
-            r = _edit_grid(model, srcs, ins, _session_dir(s), tag)
+            r = _edit_grid(model, srcs, ins, _session_dir(s), tag, seed)
         r["why"] = why
         t["renders"].append(r)
         t["images"] = r["images"]
-        t["edit_settings"] = {k: r.get(k) for k in ("steps", "guidance_scale", "resolution")}
+        t["edit_settings"] = {
+            k: r.get(k) for k in ("steps", "guidance_scale", "resolution", "seed")
+        }
     else:
         r = _render_grid(
             model,
@@ -2774,7 +2783,7 @@ def main():
         "--t2i-urls",
         default=None,
         help="per-model T2I model servers, e.g. "
-        "'sd35-medium=http://host:19102,flux1-dev=http://host:19112'. One server per "
+        "'sd35-medium=http://host:19102,flux2klein-9b=http://host:19112'. One server per "
         "model, each on its own GPU, so no model is evicted.",
     )
     ap.add_argument(
@@ -2889,7 +2898,7 @@ def main():
         if not rungs:
             off_axis, why = False, (
                 f"no {exp0 or '<unserved>'}_step* adapters under axis_framework/adapters "
-                f"-- run scripts/build_alpha_ladders.sh (released checkpoints) or scripts/export_ladder.sh EXP={exp0}"
+                f"-- run axis_framework/scripts/build_alpha_ladders.sh (released checkpoints) or axis_framework/scripts/export_ladder.sh EXP={exp0}"
             )
         else:
             off_axis, why = True, None

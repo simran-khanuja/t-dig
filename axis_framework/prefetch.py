@@ -9,7 +9,7 @@ path produces.
     # every model the T2I model server will load (it swaps between them; 15-60s each)
     python axis_framework/prefetch.py --models all
 
-    python axis_framework/prefetch.py --prompts my_prompts.txt --model flux1-dev
+    python axis_framework/prefetch.py --prompts my_prompts.txt --model flux2klein-9b
 
 Resumable: a (model, prompt) already cached at these settings is skipped. `--force`
 re-renders it.

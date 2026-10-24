@@ -7,7 +7,7 @@
 #   RUN=<same RUN> bash axis_framework/scripts/launch_local.sh stop
 #
 # SERVE names served_runs/*.json descriptors (<generation run>[:<editing run>]); build their
-# adapters first with scripts/build_alpha_ladders.sh.
+# adapters first with axis_framework/scripts/build_alpha_ladders.sh.
 #
 # Variables (defaults): RUN (local); PORT (19100) for the orchestrator, with policy, render and
 # suggest on PORT+1, +2, +3; GPU_UTIL (0.25), vLLM's share of the GPU; LORA; VQA_URL; ARMS (ours);

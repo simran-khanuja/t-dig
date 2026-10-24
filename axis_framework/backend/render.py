@@ -43,12 +43,8 @@ EDIT_MODELS = {
         "pipeline": "QwenImageEditPlusPipeline",
         "path": "Qwen/Qwen-Image-Edit-2509",
         "instruction": "edit",
-        "defaults": {
-            "num_inference_steps": 40,
-            "guidance_scale": 1.0,
-            "true_cfg_scale": 4.0,
-            "negative_prompt": " ",
-        },
+        "guidance_kwarg": "true_cfg_scale",
+        "defaults": {"num_inference_steps": 40, "true_cfg_scale": 4.0, "negative_prompt": " "},
     },
     # SD3.5 has no instruction-editing model; img2img on the generator's weights is sdedit.
     "sd3": {
@@ -479,7 +475,7 @@ def load_editor(cfg):
     return pipe
 
 
-def edit_images(sources, instructions, cfg):
+def edit_images(sources, instructions, cfg, seed=None):
     """Apply one instruction to each source image and return the edited PIL images.
 
     Args:
@@ -508,10 +504,16 @@ def edit_images(sources, instructions, cfg):
     if cfg.get("edit_steps") is not None:
         kw["num_inference_steps"] = cfg["edit_steps"]
     if cfg.get("edit_guidance") is not None:
-        kw["guidance_scale"] = cfg["edit_guidance"]
+        # Qwen-Image's CFG knob is true_cfg_scale, as for its generator (MODEL_FAMILIES).
+        kw[spec.get("guidance_kwarg", "guidance_scale")] = cfg["edit_guidance"]
     if spec["instruction"] == "sdedit" and cfg.get("edit_strength") is not None:
         # Only sdedit pipelines take strength.
         kw["strength"] = cfg["edit_strength"]
+    if seed is not None:
+        import torch
+
+        # Every edit of a set uses the set's seed, as in training (axis_grpo.training.backend).
+        kw["generator"] = torch.Generator("cpu").manual_seed(int(seed))
 
     def load(src):
         im = Image.open(src).convert("RGB") if isinstance(src, str) else src

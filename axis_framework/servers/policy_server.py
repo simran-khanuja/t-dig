@@ -193,7 +193,7 @@ def _ladder_for(exp=None):
             503,
             f"no ladder for experiment {exp!r}. Loaded: "
             f"{sorted(ladders)}. Export it with "
-            f"scripts/export_ladder.sh, or point the session at a "
+            f"axis_framework/scripts/export_ladder.sh, or point the session at a "
             f"T2I model whose ladder is loaded.",
         )
     return ladders[exp]
@@ -374,7 +374,7 @@ def route_expand(p):
                     "this policy server has no off-axis ladder: no adapters under "
                     f"{os.path.join(config.FRAMEWORK, 'adapters')} match "
                     f"{p.get('exp') or _STATE.get('default_exp')}_step*. Run "
-                    f"scripts/export_ladder.sh.",
+                    f"axis_framework/scripts/export_ladder.sh.",
                 )
             rung = pick_rung(ladder, float(off_axis))
             if not _STATE["fake"] and rung.get("lora_request") is None and not rung.get("base"):
@@ -508,7 +508,7 @@ def _resolve_off_axis(off_axis, arm, exp=None):
             503,
             "this policy server has no off-axis ladder: no adapters under "
             f"{os.path.join(config.FRAMEWORK, 'adapters')} match "
-            f"{exp or _STATE.get('default_exp')}_step*. Run scripts/export_ladder.sh.",
+            f"{exp or _STATE.get('default_exp')}_step*. Run axis_framework/scripts/export_ladder.sh.",
         )
     rung = pick_rung(ladder, float(off_axis))
     if not _STATE["fake"] and rung.get("lora_request") is None and not rung.get("base"):
@@ -708,7 +708,7 @@ def route_edit_plan(p):
     max_tokens = int(p.get("max_tokens", config.MAX_TOKENS))
     retries = int(p.get("retries", config.EXPAND_RETRIES))
 
-    rung, note, off_axis = _resolve_off_axis(p.get("off_axis", config.OFF_AXIS_DEFAULT), arm, exp)
+    rung, note, off_axis = _resolve_off_axis(p.get("off_axis"), arm, exp)
     try:
         messages = policy_prompt.build_layer_messages(
             base_prompt, axis_a, axis_b, srcp, model=p.get("model"), vlm=vlm, exp=exp

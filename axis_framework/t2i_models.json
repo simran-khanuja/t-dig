@@ -1,20 +1,43 @@
 {
   "_doc": "T2I models the framework may load. DATA, not code: add a model by adding an entry. `path` is relative to $AXIS_MODELS. `family` is a key of backend/render.py's MODEL_FAMILIES (pipeline class, latent packing) and EDIT_MODELS (its image editor). `iid_dir` is where a round-one run's i.i.d. sets for that T2I model live, relative to $T_DIG_RUNS/axis_grpo/iid ('.' for the top level). Render SETTINGS are not here: they are read from the training run being served (profiles.render_settings).",
-  "sd35-medium": {"label": "SD3.5-Medium", "path": "sd35-medium", "family": "sd3",
-                  "shared_latents": true, "guidance": true, "vram_gb": 16, "iid_dir": ".",
-                  "note": ""},
-  "sd35-large": {"label": "SD3.5-Large", "path": "sd35-large", "family": "sd3",
-                 "shared_latents": true, "guidance": true, "vram_gb": 30,
-                 "iid_dir": "sd35-large", "note": ""},
-  "flux1-dev": {"label": "FLUX.1-dev", "path": "flux1-dev", "family": "flux",
-                "shared_latents": false, "guidance": false, "vram_gb": 24,
-                "iid_dir": "flux1-dev",
-                "note": "guidance-distilled; shared-latent packing unverified, so Initial diversity is pinned to 1"},
-  "qwen-image": {"label": "Qwen-Image", "path": "qwen-image-2512", "family": "qwen-image",
-                 "shared_latents": true, "guidance": true, "vram_gb": 47,
-                 "iid_dir": "qwen-image",
-                 "note": "20B -- needs an 80GB card; on a 48GB A6000 it fits only via CPU offload, which in turn needs >64GB of host RAM"},
-  "flux2klein-9b": {"label": "FLUX.2-Klein-9B", "path": "flux2-klein-9b", "family": "flux2klein",
-                    "shared_latents": true, "guidance": false, "vram_gb": 28,
-                    "iid_dir": "flux2klein-9b", "note": ""}
+  "sd35-medium": {
+    "label": "SD3.5-Medium",
+    "path": "sd35-medium",
+    "family": "sd3",
+    "shared_latents": true,
+    "guidance": true,
+    "vram_gb": 16,
+    "iid_dir": ".",
+    "note": ""
+  },
+  "sd35-large": {
+    "label": "SD3.5-Large",
+    "path": "sd35-large",
+    "family": "sd3",
+    "shared_latents": true,
+    "guidance": true,
+    "vram_gb": 30,
+    "iid_dir": "sd35-large",
+    "note": ""
+  },
+  "qwen-image": {
+    "label": "Qwen-Image",
+    "path": "qwen-image-2512",
+    "family": "qwen-image",
+    "shared_latents": true,
+    "guidance": true,
+    "vram_gb": 47,
+    "iid_dir": "qwen-image",
+    "note": "20B -- needs an 80GB card; on a 48GB A6000 it fits only via CPU offload, which in turn needs >64GB of host RAM"
+  },
+  "flux2klein-9b": {
+    "label": "FLUX.2-Klein-9B",
+    "path": "flux2-klein-9b",
+    "family": "flux2klein",
+    "shared_latents": true,
+    "guidance": false,
+    "vram_gb": 28,
+    "iid_dir": "flux2klein-9b",
+    "note": ""
+  }
 }

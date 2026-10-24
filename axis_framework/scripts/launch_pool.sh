@@ -17,7 +17,7 @@
 #   SERVE=tdig_flux9b_alpha_gen:tdig_flux9b_edit_alpha
 # Everything model-specific (T2I model, policy base, VLM or not, LoRA rank, context length, render
 # settings) is read from those runs by axis_framework/profiles.py and printed before anything
-# loads. Build their adapters first with scripts/build_alpha_ladders.sh.
+# loads. Build their adapters first with axis_framework/scripts/build_alpha_ladders.sh.
 #
 # Other variables (defaults):
 #   MODEL          served T2I model to pool (the first)
@@ -71,13 +71,14 @@ $PY_T2I -m axis_framework.profiles || { echo "the served runs do not resolve -- 
 echo "------------------------------------------------------------------------"
 MODEL=${MODEL:-$($PY_T2I -c 'from axis_framework import config; print(config.default_model())')}
 export AXIS_FW_MODEL=$MODEL
-# Default --lora (answers requests that name no rung): the last rung of this T2I model's
-# generation ladder.
+# Default --lora (answers requests that name no rung): rung 100 of this T2I model's generation
+# ladder, i.e. the released adapter at scale 1 on an alpha ladder; else its last rung.
 if [ -z "${LORA:-}" ] && [ "${FAKE:-0}" != "1" ]; then
   EXP1=$($PY_T2I -c "from axis_framework import config; print(config.off_axis_exp_for('$MODEL'))")
-  LORA=$(ls -d "$ROOT/axis_framework/adapters/${EXP1}"_step* 2>/dev/null \
+  LORA="$ROOT/axis_framework/adapters/${EXP1}_step100"
+  [ -d "$LORA" ] || LORA=$(ls -d "$ROOT/axis_framework/adapters/${EXP1}"_step* 2>/dev/null \
          | awk -F_step '{print $NF" "$0}' | sort -n | tail -1 | cut -d' ' -f2)
-  [ -n "$LORA" ] || { echo "no adapters for $EXP1 -- run scripts/build_alpha_ladders.sh $EXP1"; exit 1; }
+  [ -n "$LORA" ] || { echo "no adapters for $EXP1 -- run axis_framework/scripts/build_alpha_ladders.sh $EXP1"; exit 1; }
 fi
 
 ARMS=${ARMS:-ours}

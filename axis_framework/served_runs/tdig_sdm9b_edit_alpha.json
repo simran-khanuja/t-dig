@@ -65,7 +65,7 @@
   200
  ],
  "source": "https://huggingface.co/neulab/t-dig/tree/main/sd35-medium/9b-edit",
- "note": "Alpha ladder of the Qwen3.5-9B editing policy (writes K edit instructions) trained with GRPO against Stable Diffusion 3.5 Medium, training update 750. Rung N serves that LoRA adapter at scale N/100 (0 to 2); the slider covers 0 to 1 in steps of 0.05 and the alpha box goes up to 2. Adapters: neulab/t-dig/sd35-medium/9b-edit (the released checkpoint there is update 500, chosen by the rule in its README; the ladder the paper's interactive study served used update 750). Build the rungs with scripts/build_alpha_ladders.sh.",
+ "note": "Alpha ladder of the Qwen3.5-9B editing policy (writes K edit instructions) trained with GRPO against Stable Diffusion 3.5 Medium, training update 750. Rung N serves that LoRA adapter at scale N/100 (0 to 2); the slider covers 0 to 1 in steps of 0.05 and the alpha box goes up to 2. Adapters: neulab/t-dig/sd35-medium/9b-edit (the released checkpoint there is update 500, chosen by the rule in its README; the ladder the paper's interactive study served used update 750). Build the rungs with axis_framework/scripts/build_alpha_ladders.sh.",
  "edit": {
   "steps": 40,
   "guidance": 4.5,
