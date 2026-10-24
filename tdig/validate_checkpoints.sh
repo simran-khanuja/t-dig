@@ -16,7 +16,9 @@
 #   STEPS          'all', 'latest', 'every:<N>', or '+'-joined integers such as 0+300+600+1200;
 #                  0 is the untrained policy
 #   SETS           ';'-separated name=parquet entries (sbatch --export splits on commas, so neither
-#                  STEPS nor SETS may contain one)
+#                  STEPS nor SETS may contain one). Name a set heldout* or probe* when its rows
+#                  carry their own align_thresh: paper_metrics.py keeps the per-row threshold
+#                  (fidelity_penalty, reward) only for sets named so.
 #   LIMIT          score only the first N rows of each set
 #   CONCURRENCY    completions scored at once (default: 48)
 #   VAL_STEPS, VAL_RES  override the validation render steps and resolution
@@ -32,11 +34,11 @@ source "${T_DIG_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}/scripts/
 ROOT=$T_DIG_ROOT
 RUN=${TRAIN_RUN:?training run directory}
 OUT=${VAL_OUT:?output directory}
+: "${STEPS:?all, latest, every:N or +-joined steps}"
 cd "$ROOT"
 export PYTHONPATH="$ROOT"
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 mkdir -p "$OUT/staging"
-HOST=$(hostname)
 GPUS=($(t_dig_gpus))
 [ "${#GPUS[@]}" -ge 3 ] || { echo "need at least 3 GPUs (policy, VQAScore, one reward service)"; exit 1; }
 NR=$(( ${#GPUS[@]} - 2 ))
@@ -86,7 +88,7 @@ PYEOF
   CUDA_VISIBLE_DEVICES=${GPUS[$((i + 2))]} "$PY_REWARD" -m axis_grpo.training.service --config "$OUT/reward-$i.json" \
     --out "$OUT/reward-$i" --host 0.0.0.0 --port $PORT --execute > "$OUT/reward-$i.log" 2>&1 &
   PIDS+=($!)
-  ENDPOINTS+=(--endpoint "http://$HOST:$PORT")
+  ENDPOINTS+=(--endpoint "http://127.0.0.1:$PORT")
 done
 wait_healthy "http://127.0.0.1:$VQA_PORT" 3600
 for i in $(seq 0 $((NR - 1))); do wait_healthy "http://127.0.0.1:$((18750 + i))" 3600; done

@@ -24,6 +24,8 @@ def prepare(out, input_path, model_path, target_path):
         raise ValueError('Wait until pass 2 has decided every input')
     if not data['kept']:
         raise ValueError('No accepted prompts')
+    provenance = read_json(model_path / 'tdig-provenance.json')
+    model_inventory, dependency_inventory = inventory(model_path), inventory(target_path)
     out.mkdir(parents=True)
     atomic_json(out / 'input.json', data)
     atomic_json(
@@ -41,7 +43,6 @@ def prepare(out, input_path, model_path, target_path):
     (out / 'source/scripts').mkdir()
     shutil.copy2(__file__, out / 'source/scripts/run_cluster_sweep.py')
     shutil.copy2(ROOT / 'scripts/launch_cluster_sweep.sh', out / 'launch.sh')
-    provenance = read_json(model_path / 'tdig-provenance.json')
     plan = dict(
         input_hash=digest(data),
         input_path=str(input_path),
@@ -50,8 +51,8 @@ def prepare(out, input_path, model_path, target_path):
         seed=42,
         model=provenance['repository'],
         revision=provenance['revision'],
-        model_inventory=inventory(model_path),
-        dependency_inventory=inventory(target_path),
+        model_inventory=model_inventory,
+        dependency_inventory=dependency_inventory,
         source_hashes={
             str(p.relative_to(out)): file_hash(p) for p in (out / 'source').rglob('*.py')
         },
@@ -242,6 +243,8 @@ def main():
     if not a.execute:
         p.error('Explicit --execute required; preparation runs no GPU work')
     if a.action == 'prepare':
+        if a.input is None:
+            p.error('prepare requires --input')
         print(
             prepare(a.out.resolve(), a.input.resolve(), a.model.resolve(), a.dependencies.resolve())
         )

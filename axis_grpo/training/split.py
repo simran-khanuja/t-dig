@@ -105,7 +105,7 @@ def main():
                 for pid in ids
             )
         ),
-        reward_text='request',
+        reward_text=manifest['reward_text'],
         split_unit='base prompt with all axes and overall rows',
     )
     print(json.dumps(report, indent=2))

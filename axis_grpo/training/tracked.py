@@ -5,7 +5,7 @@ completion against the base prompt. The scorers:
 
 - `imagereward`: ImageReward-v1.0. Unbounded; about -2 to 2. Higher is better.
 - `hpsv3`: HPSv3, a Qwen2-VL-7B preference model that reads the image and the whole prompt
-  against a written rubric. Unbounded, centred near 0; higher is better. The preference score
+  against a written rubric. Unbounded, about 5 to 16 on these T2I models; higher is better. The preference score
   the paper reports; the prompt is not truncated at 77 tokens. Holds about 17 GB of GPU memory.
 - `hpsv2`: HPS v2.1, the scaled image-text logit of a fine-tuned CLIP ViT-H/14, for comparison
   with runs that logged it. About 0.2 to 0.35.

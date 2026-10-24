@@ -14,11 +14,10 @@ ratio per arm, fidelity distribution, grounding ablation) must be recomputable f
            accept -> (optional high-quality re-render) -> DONE
            reject -> CHOOSE_AXIS with the rejected axis excluded from re-suggestion
 
-The UI renders one screen per state, and the analysis uses the state to know what a
-participant had seen when they answered. `advance` is the only writer, so an illegal
-transition is a 409.
-
-The gate is the user's own yes/no button.
+The gate and the accept/reject step are study mode's; the open demo answers the gate itself
+and stays in REVIEW, making further sets. The UI renders one screen per state, and the
+analysis uses the state to know what a participant had seen when they answered. `advance` is
+the only writer, so an illegal transition is a 409.
 """
 
 import json

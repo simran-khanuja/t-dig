@@ -23,8 +23,6 @@ class GPUBackend:
         cfg = t2i_model_defaults('iid', config['renderer'])
         cfg.update(config['render']['train'], device=config['device'])
         self.t2i_model = NativeT2IModel(assets, cfg)
-        # render() gives each expanded prompt its own generator seeded with the set's seed, so
-        # all images of a set start from the same noise.
         self.t2i_model.pipe.vae.enable_slicing()
         tpips_checkpoint = local_checkpoint(config['tpips_checkpoint'], config['cache'])
         with qwen_tokenizer_compat():

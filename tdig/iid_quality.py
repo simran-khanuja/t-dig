@@ -135,7 +135,7 @@ def merge(index, out, num_shards, t2i_models):
 
 
 def attach(quality, dataset, out, t2i_models):
-    """Publish copies of the dataset variants of `renderers` with `quality_thresh` on every row."""
+    """Publish copies of the dataset variants of `t2i_models` with `quality_thresh` on every row."""
     import pyarrow.parquet as pq
     from axis_grpo.dataset import export_parquet
     from axis_grpo.prepare import new_directory

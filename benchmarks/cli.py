@@ -23,13 +23,6 @@ def registry():
     return json.loads(Path(__file__).with_name('sources.lock.json').read_text())
 
 
-def positive(value):
-    result = int(value)
-    if result <= 0:
-        raise argparse.ArgumentTypeError('must be positive')
-    return result
-
-
 def make_rows(name, raw, spec):
     if digest(raw) != spec['sha256']:
         raise ValueError('Source SHA256 mismatch; refusing a changed benchmark')

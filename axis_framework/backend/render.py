@@ -14,8 +14,6 @@ import time
 
 import numpy as np
 
-from axis_framework import config
-
 TPIPS_CKPT = "sywang/TPIPS-Embed-Qwen3VL-8B"
 
 # Editor for each family's images, for the layered task (image + instruction -> edited
@@ -95,23 +93,17 @@ MODEL_FAMILIES = {
 
 _STATE = {}
 
-# Defaults of a render config; the T2I model server overrides the model, the grid settings and the
-# VQAScore URL. require_tpips / require_vqa (default True) are read with .get().
+# Defaults of a render config; the T2I model server sets the model (model_path, model_family),
+# the grid settings and the VQAScore URL. require_tpips / require_vqa (default True) are read
+# with .get().
 DEFAULTS = {
     "device": "cuda",
-    "render_device": None,
-    "score_device": None,
     "model_family": "sd3",
-    "model_path": os.path.join(config.MODELS, "sd35-medium"),
     "resolution": 512,
     "steps": 16,
     "guidance": 4.5,
     "render_batch": 16,
-    "vae_slicing": True,
-    "tpips_ckpt": TPIPS_CKPT,
     "vqa_url": None,
-    "vqa_timeout": 600,
-    "vqa_tmpdir": None,
     "edit_steps": 16,
     "edit_guidance": 4.5,
     "edit_strength": 0.6,
@@ -128,33 +120,22 @@ def _patch_processor_kwarg():
     from transformers import Qwen3VLProcessor
 
     orig = Qwen3VLProcessor.from_pretrained
-    if getattr(orig, "_axis_grpo_patched", False):
+    if getattr(orig, "_patched", False):
         return
 
     def from_pretrained(*args, **kw):
         kw.pop("fix_mistral_regex", None)
         return orig(*args, **kw)
 
-    from_pretrained._axis_grpo_patched = True
+    from_pretrained._patched = True
     Qwen3VLProcessor.from_pretrained = from_pretrained
 
 
-def rdev(cfg):
-    """Return the T2I model's device."""
-    return cfg.get("render_device") or cfg["device"]
-
-
-def sdev(cfg):
-    """Return the device of TPIPS: cfg["score_device"], else the T2I model's device."""
-    return cfg.get("score_device") or cfg["device"]
-
-
 def load_models(cfg):
-    """Load the T2I model on rdev(cfg), TPIPS on sdev(cfg), and check the VQAScore service."""
+    """Load the T2I model and TPIPS on cfg["device"], and check the VQAScore service."""
     import torch
 
-    dev, dtype = rdev(cfg), torch.bfloat16
-    sd = sdev(cfg)
+    dev, dtype = cfg["device"], torch.bfloat16
 
     if "pipe" not in _STATE:
         import diffusers
@@ -170,10 +151,9 @@ def load_models(cfg):
         pipe = pipe_cls.from_pretrained(cfg["model_path"], torch_dtype=dtype)
         pipe = pipe.to(dev)
         pipe.set_progress_bar_config(disable=True)
-        if cfg.get("vae_slicing", True):
-            # Decode one image at a time to avoid the batched VAE decode's memory spike;
-            # denoising stays batched. cfg["vae_slicing"]=False disables this.
-            pipe.vae.enable_slicing()
+        # Decode one image at a time to avoid the batched VAE decode's memory spike;
+        # denoising stays batched.
+        pipe.vae.enable_slicing()
         _STATE["pipe"] = pipe
         print(
             f"[load] {family} ({MODEL_FAMILIES[family]['pipeline_cls']}) in "
@@ -188,7 +168,7 @@ def load_models(cfg):
 
         t0 = time.time()
         _patch_processor_kwarg()
-        _STATE["tpips"] = tpips_mod.load_model("embedding", cfg["tpips_ckpt"], device=sd)
+        _STATE["tpips"] = tpips_mod.load_model("embedding", TPIPS_CKPT, device=dev)
         print(f"[load] TPIPS in {time.time() - t0:.0f}s", flush=True)
 
     # VQAScore runs in its own process because t2v_metrics and tpips need incompatible
@@ -209,7 +189,7 @@ def load_models(cfg):
     if not h.get("loaded"):
         raise RuntimeError(f"vqa_service at {url} has no model loaded: {h}")
     # The service scores only images inside its --staging directory, so write them there.
-    if not cfg.get("vqa_tmpdir") and h.get("staging"):
+    if h.get("staging"):
         cfg["vqa_tmpdir"] = h["staging"]
     print(f"[load] VQA service OK at {url} ({h.get('model')})", flush=True)
 
@@ -228,7 +208,7 @@ def _one_latent(seed, cfg):
     pipe = _STATE["pipe"]
     h = w = cfg["resolution"]
     family = cfg.get("model_family", "sd3")
-    g = torch.Generator(device=rdev(cfg)).manual_seed(int(seed))
+    g = torch.Generator(device=cfg["device"]).manual_seed(int(seed))
 
     if family == "sd3":
         return torch.randn(
@@ -239,7 +219,7 @@ def _one_latent(seed, cfg):
                 w // pipe.vae_scale_factor,
             ),
             generator=g,
-            device=rdev(cfg),
+            device=cfg["device"],
             dtype=torch.bfloat16,
         )
 
@@ -247,7 +227,7 @@ def _one_latent(seed, cfg):
     spec = MODEL_FAMILIES[family]
     if "unpacked_shape" in spec:
         return torch.randn(
-            spec["unpacked_shape"](pipe, h), generator=g, device=rdev(cfg), dtype=torch.bfloat16
+            spec["unpacked_shape"](pipe, h), generator=g, device=cfg["device"], dtype=torch.bfloat16
         )
 
     kw = {
@@ -255,7 +235,7 @@ def _one_latent(seed, cfg):
         "height": h,
         "width": w,
         "dtype": torch.bfloat16,
-        "device": rdev(cfg),
+        "device": cfg["device"],
         "generator": g,
         "latents": None,
         spec["channels_kwarg"]: spec["latent_channels"](pipe),
@@ -395,7 +375,7 @@ def vqa_pairs(images, texts, cfg):
             url.rstrip("/") + "/score", data=body, headers={"Content-Type": "application/json"}
         )
         try:
-            with urllib.request.urlopen(req, timeout=cfg.get("vqa_timeout", 600)) as r:
+            with urllib.request.urlopen(req, timeout=600) as r:
                 resp = json.loads(r.read())
         except urllib.error.HTTPError as e:
             # Read the body to report the server-side error, not just the status code.
@@ -467,7 +447,7 @@ def load_editor(cfg):
         )
     else:
         pipe = cls.from_pretrained(path, torch_dtype=torch.bfloat16)
-    pipe = pipe.to(rdev(cfg))
+    pipe = pipe.to(cfg["device"])
     pipe.set_progress_bar_config(disable=True)
     _STATE["editor"] = pipe
     _STATE["editor_spec"] = spec

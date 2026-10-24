@@ -9,10 +9,9 @@ from pathlib import Path
 import tempfile
 
 
-def scheduler_job_id(environ=None):
+def scheduler_job_id():
     """Return the batch job id: T_DIG_JOB_ID, else SLURM_JOB_ID ('' outside a job)."""
-    environ = os.environ if environ is None else environ
-    return environ.get("T_DIG_JOB_ID") or environ.get("SLURM_JOB_ID") or ""
+    return os.environ.get("T_DIG_JOB_ID") or os.environ.get("SLURM_JOB_ID") or ""
 
 
 def canonical(value):

@@ -34,12 +34,6 @@ ROOT = Path(__file__).resolve().parents[1]
 SHARDS = 8
 
 
-def runtime():
-    value = environment()
-    value.pop('cuda_visible_devices', None)
-    return value
-
-
 def clean_rows(rows):
     # Screening axes of the curation must not reach the elicitor.
     return [
@@ -102,7 +96,7 @@ def prepare(input_path, out, k=4, seed=42, allow_partial=False, execute=False):
         configs=configs,
         upstream_complete=data['metadata']['upstream_complete'] is True,
         allow_partial_input=allow_partial,
-        environment=runtime(),
+        environment=environment(),
         seed_contract='sha256-prompt-seed-slot-stream-v1',
         asset_hashes={name: digest(lock) for name, lock in locks.items()},
     )
@@ -218,7 +212,7 @@ def worker(out, t2i_model, shard, max_new_images=None, factory=None):
     committed image differs from the frozen run.
     """
     plan, rows = checked_plan(out)
-    if runtime() != plan['environment']:
+    if environment() != plan['environment']:
         raise ValueError('Package versions differ from the prepared run; use its environment')
     run = Path(out) / t2i_model / f'shard-{shard:02d}'
     selected, manifest = manifest_for(plan, rows, t2i_model, shard)

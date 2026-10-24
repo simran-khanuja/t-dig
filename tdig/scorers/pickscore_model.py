@@ -10,20 +10,16 @@ two images generated from the same prompt. The score has CLIPScore's form:
 
 The score is returned raw, roughly 15-25 in practice, unbounded and not a probability. Compare
 it only between images of the same prompt; its level shifts with prompt length and wording.
-verl-omni's `verl_omni/utils/reward_score/pickscore_reward.py` divides the same score by 26 for
-use as an RL reward, so its numbers are not comparable to these.
 
-The CLIP text encoder truncates prompts at 77 tokens. Base prompts fit. Policy prompts are
-60-80 words and do not, so `pickscore_own` scores against roughly the first 50 words. HPSv2 has
-the same limit, ImageReward (BLIP) truncates at 35 tokens, and HPSv3 reads the whole prompt.
+The CLIP text encoder truncates prompts at 77 tokens. Base prompts fit; rewritten prompts of
+60-80 words would not, so PickScore is scored against the base prompt only. HPSv2 has the same
+limit, ImageReward (BLIP) truncates at 35 tokens, and HPSv3 reads the whole prompt.
 """
-
-import os
 
 # PickScore ships model weights only. The processor (tokenizer and image transform) comes from
 # the laion CLIP repo the weights were trained with, which HPSv2 also uses.
-MODEL_ID = os.environ.get("AXIS_PICKSCORE_MODEL", "yuvalkirstain/PickScore_v1")
-PROCESSOR_ID = os.environ.get("AXIS_PICKSCORE_PROCESSOR", "laion/CLIP-ViT-H-14-laion2B-s32B-b79K")
+MODEL_ID = "yuvalkirstain/PickScore_v1"
+PROCESSOR_ID = "laion/CLIP-ViT-H-14-laion2B-s32B-b79K"
 
 # CLIP's text context length; longer prompts are truncated.
 MAX_TEXT_TOKENS = 77

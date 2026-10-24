@@ -5,7 +5,7 @@ A web tool that puts the trained T-DIG policies in a loop with a person; it is t
 1. The user types a prompt. The served T2I model draws an *i.i.d. set* of 4 images at independent noise.
 2. The user names an *axis* in their own words ("the dog's breed", "the lighting"), or takes one of the axes a VLM suggests from the images.
 3. The *policy* (Qwen3.5 with the GRPO LoRA) writes K = 4 prompts that vary along the axis (generation), or K edit instructions for the i.i.d. images (editing).
-4. The T2I model draws them. The user accepts or rejects the set, changes the axis, layers another axis on top, or moves the diversity slider.
+4. The T2I model draws them. The user changes the axis, layers another axis on top, moves the diversity slider, or downloads the set; in [study mode](#study-mode) they also rate it and accept or reject it.
 
 The axis text reaches the policy verbatim, and the audit metrics condition TPIPS on the same text.
 
@@ -17,11 +17,11 @@ The axis text reaches the policy verbatim, and the audit metrics condition TPIPS
 | Seed | policy | The policy's sampling seed. It stays fixed while the slider or K moves; "Change seed" draws a new set of ideas at the same level. |
 | Axis / mode | policy | `POST /session/respin` re-expands as a new trial: `mode=fresh` varies the original prompt again, `mode=layer` varies this round's K prompts so the set gains a second kind of variation. |
 | Generate / Edit | policy | `POST /session/axis` with `mode=generate` writes K prompts; `mode=edit` (only when an editing run is served) writes K edit instructions applied to the i.i.d. images. |
-| Set size K | policy | 2, 4, 8 or 16 (`AXIS_FW_K_CHOICES`). Policies were trained at K = 4; other K are logged with `k_off_distribution`. |
+| Set size K | policy | `k` on `/session/axis` and `/session/respin`: 2, 4, 8 or 16 (`AXIS_FW_K_CHOICES`); the UI does not offer it. Policies were trained at K = 4; other K are logged with `k_off_distribution`. |
 | Initial diversity a in [0, 1] | render | Share of independent per-image noise: `eps_k = sqrt(1-a) * eps_shared + sqrt(a) * eps_k`. At 0 (the live default) all images share the latent the policy was trained under, so they differ through their wording only. The i.i.d. stage uses 1. |
 | Text guidance | render | The T2I model's CFG scale; default is the served run's validation setting. |
 
-The web UI shows the policy-side controls only. `POST /session/rerender {session_id, guidance_scale, init_diversity}` redraws the same prompts with other render settings. `/session/axis` and `/session/respin` accept `temperature`, `top_p` and `top_k`. Two actions use the editor without the policy: `/session/fix` applies the user's own instruction to one picture, and `/session/merge` combines several pictures.
+The web UI shows the policy-side controls other than K. `POST /session/rerender {session_id, guidance_scale, init_diversity}` redraws the same prompts with other render settings. `/session/axis` and `/session/respin` accept `temperature`, `top_p` and `top_k`. Two actions use the editor without the policy: `/session/fix` applies the user's own instruction to one picture, and `/session/merge` combines several pictures.
 
 Axis suggestions: whenever a set of images exists, the orchestrator asks the suggest server in the background what is the same across the images (or across the user's selected subset). The chip `overall` is always offered; rejected axes are not suggested again. With `--speculate N` (default 3) the policy expands the top N suggestions in one batched call before the user picks.
 
@@ -57,7 +57,7 @@ $PY_VQA axis_grpo/training/vqa_service.py --execute --port 19096 \
 VQA_URL=http://127.0.0.1:19096 SERVE=... bash axis_framework/scripts/launch_local.sh
 ```
 
-Sessions go `START -> GATE -> CHOOSE_AXIS -> REVIEW -> DONE` (`session.py`). GATE asks "do these need more variety?"; rejecting at REVIEW returns to CHOOSE_AXIS. A respin is a new trial linked by `respin_of`, so every logged render points at the prompts it drew.
+Sessions go `START -> GATE -> CHOOSE_AXIS -> REVIEW -> DONE` (`session.py`). In study mode GATE asks "do these need more variety?" and REVIEW ends with accept or reject, where rejecting returns to CHOOSE_AXIS; the open demo answers the gate itself and stays in REVIEW, making further sets. A respin is a new trial linked by `respin_of`, so every logged render points at the prompts it drew.
 
 ### Seeds
 
@@ -110,7 +110,7 @@ The other runs use Qwen3.5-9B. SD3.5 edits with img2img SDEdit, FLUX.2 [klein] w
 | `ladder`, `alpha_ladder: true` | rungs in slider order (`0` = base model); rung N is labelled `alpha N/100` |
 | `source`, `note` | where the adapter comes from |
 
-Grids render at `val`, the edit stage at the editing run's `edit`, the i.i.d. stage at the grid settings, and an accepted set re-renders at the larger of the grid and i.i.d. resolutions. `AXIS_FW_<STAGE>_{RESOLUTION,STEPS,GUIDANCE}` (STAGE = GRID, IID, EDIT, ACCEPT) overrides a value for every T2I model; `/health` reports overrides. To see what a `SERVE` resolves to without loading anything:
+Grids render at `val`, the edit stage at the editing run's `edit`, the i.i.d. stage at the grid settings, and an accepted set re-renders at the larger of the grid and i.i.d. resolutions. `AXIS_FW_<STAGE>_{RESOLUTION,STEPS,GUIDANCE}` (STAGE = GRID, IID, EDIT, ACCEPT) overrides a value for every T2I model; the run's `run_start` log record lists the overridden fields. To see what a `SERVE` resolves to without loading anything:
 
 ```bash
 source scripts/env.sh
@@ -119,7 +119,7 @@ AXIS_FW_SERVE=tdig_flux9b_alpha_gen:tdig_flux9b_edit_alpha $PY_REWARD -m axis_fr
 
 ## Building the ladders
 
-Download the released checkpoints (`https://huggingface.co/neulab/t-dig`, folders `<T2I model>/<size>-<generate|edit>`), then build the rungs on CPU with `PY_TRAIN`:
+Download the released checkpoints (`https://huggingface.co/neulab/t-dig`; `build_alpha_ladders.sh` maps each ladder to its folder, e.g. `flux2-klein-9b/9b-generate` or `qwen-image-2512/9b-generate-paper`), then build the rungs on CPU with `PY_TRAIN`:
 
 ```bash
 bash axis_framework/scripts/build_alpha_ladders.sh                      # all ten ladders
@@ -157,7 +157,7 @@ The 35B-A3B policy's weights alone take about 70 GB: serve it with `launch_pool.
 
 ## Running on a whole node
 
-`scripts/launch_pool.sh` gives each service its own GPU, on 2 + `T2I_GPUS` GPUs:
+`scripts/launch_pool.sh` gives each service its own GPU, on 2 + `T2I_GPUS` GPUs. The GPUs are those of `CUDA_VISIBLE_DEVICES` when it is set, else every GPU of the node; in that list:
 
 ```
 gpu 0          policy   (port 19101)  vLLM + all LoRA rungs, CUDA graphs on
@@ -170,7 +170,7 @@ SERVE=tdig_qimg9b_alpha_gen:tdig_qimg9b_edit_alpha bash axis_framework/scripts/l
 # or sbatch --export=ALL,T_DIG_ROOT=<repo>,SERVE=... axis_framework/scripts/launch_pool.sh
 ```
 
-It prints the resolved profile (and exits if the runs do not resolve), waits for every `/health`, pre-renders the start gallery (`prefetch.py`), then starts the orchestrator on `PORT` with `--t2i-pool`. A grid is split across the replicas; each shard slices the latents of the whole grid, so the images match a single-server render up to batch effects (launch the replicas with `--render-batch 1` for exact parity).
+It prints the resolved profile (and exits if the runs do not resolve), waits for every `/health`, pre-renders the start gallery (`prefetch.py`), then runs the orchestrator on `PORT` with `--t2i-pool` in the foreground; when it ends (Ctrl-C, `scancel`) the services are stopped. A grid is split across the replicas; each shard slices the latents of the whole grid, so the images match a single-server render up to batch effects (launch the replicas with `--render-batch 1` for exact parity).
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -179,7 +179,7 @@ It prints the resolved profile (and exits if the runs do not resolve), waits for
 | `GPU_UTIL` | 0.85 | vLLM's share of the policy GPU |
 | `OFF_AXIS` | 0.2 | slider start |
 | `RUN`, `PORT`, `ARMS`, `LORA` | `pool_<job id>`, 19100, `ours` | as in `launch_local.sh` |
-| `GPU_BASE`, `SUB_PORT_BASE` | 0, 19100 | first GPU and internal port base, for a second instance on the node |
+| `SUB_PORT_BASE` | 19100 | internal port base; a second instance on the node sets it and `CUDA_VISIBLE_DEVICES` |
 | `NO_AUDIT=1`, `NO_PREFETCH=1`, `NO_CUDAGRAPHS=1`, `FAKE=1` | | |
 | `PY_POLICY`, `PY_T2I`, `PY_SUGGEST` | `PY_TRAIN`, `PY_REWARD`, `PY_REWARD` | interpreters |
 

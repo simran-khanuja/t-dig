@@ -1,5 +1,6 @@
 """Bounded execution, verified resumption, and auditable batch attempts."""
 
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 from datetime import datetime, timezone
 import importlib.metadata
@@ -110,8 +111,6 @@ def summary(rows, manifest, events):
     kept = [done[r["id"]] for r in rows if r["id"] in done and done[r["id"]]["keep"]]
     rejected = [done[r["id"]] for r in rows if r["id"] in done and not done[r["id"]]["keep"]]
     pending = [r for r in rows if r["id"] not in done]
-    from collections import Counter
-
     return {
         "schema_version": SCHEMA,
         "kind": "filter_summary",

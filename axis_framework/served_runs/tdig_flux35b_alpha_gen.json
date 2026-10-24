@@ -14,7 +14,6 @@
   "steps": 4,
   "guidance": 1.0
  },
- "exp": "tdig_flux35b_alpha_gen",
  "task": "expand",
  "vlm": false,
  "limit_images": 0,
@@ -66,9 +65,5 @@
  ],
  "source": "https://huggingface.co/neulab/t-dig/tree/main/flux2-klein-9b/35b-a3b-generate",
  "note": "Alpha ladder of the Qwen3.5-35B-A3B generation policy (writes K prompts) trained with GRPO against FLUX.2 [klein] 9B, training update 700. Rung N serves that LoRA adapter at scale N/100 (0 to 2); the slider covers 0 to 1 in steps of 0.05 and the alpha box goes up to 2. Adapters: neulab/t-dig/flux2-klein-9b/35b-a3b-generate (the released checkpoint there is update 750, chosen by the rule in its README; the ladder the paper's interactive study served used update 700). Build the rungs with axis_framework/scripts/build_alpha_ladders.sh.",
- "edit": {
-  "steps": null,
-  "guidance": null
- },
  "alpha_ladder": true
 }

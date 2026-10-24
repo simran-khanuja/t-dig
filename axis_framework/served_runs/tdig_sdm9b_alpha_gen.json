@@ -14,7 +14,6 @@
   "steps": 40,
   "guidance": 4.5
  },
- "exp": "tdig_sdm9b_alpha_gen",
  "task": "expand",
  "vlm": false,
  "limit_images": 0,
@@ -66,9 +65,5 @@
  ],
  "source": "https://huggingface.co/neulab/t-dig/tree/main/sd35-medium/9b-generate-paper",
  "note": "Alpha ladder of the Qwen3.5-9B generation policy (writes K prompts) trained with GRPO against Stable Diffusion 3.5 Medium, training update 700. Rung N serves that LoRA adapter at scale N/100 (0 to 2); the slider covers 0 to 1 in steps of 0.05 and the alpha box goes up to 2. Adapters: neulab/t-dig/sd35-medium/9b-generate-paper. Build the rungs with axis_framework/scripts/build_alpha_ladders.sh.",
- "edit": {
-  "steps": null,
-  "guidance": null
- },
  "alpha_ladder": true
 }

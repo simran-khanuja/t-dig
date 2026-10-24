@@ -227,8 +227,10 @@ def score(out, real_images, inception_dir, device, complete_only=True, expected=
             continue
         paths = [p for item in items for p in item["paths"]]
         name = out / f'features-{group.replace("|", "-")}.npy'
-        f = np.load(name) if name.exists() and len(np.load(name)) == len(paths) else features(paths)
-        np.save(name, f)
+        f = np.load(name) if name.exists() else None
+        if f is None or len(f) != len(paths):
+            f = features(paths)
+            np.save(name, f)
         kid = float(kernel_distance(f, real))
         table[group] = dict(
             captions=len(items),

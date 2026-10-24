@@ -124,7 +124,6 @@ def pool_at(data, records, vectors, labels, threshold, provenance, seed=42):
         n_kept=len(kept),
         n_removed=len(records) - len(kept),
         n_clusters=len(clusters),
-        n_clusters_before_minimum=len(clusters),
         sweep_provenance=provenance,
         threshold_validated=False,
         variation_axis_count_distribution=dict(
@@ -213,4 +212,4 @@ section{{padding:1em;border-bottom:1px solid #ccc}}select,button{{padding:8px}}<
 <button onclick="saveLabels()">Download labels</button>{''.join(cards)}
 <script>const pairs={payload};document.querySelectorAll('select').forEach(e=>e.onchange=()=>pairs[+e.dataset.index].label=e.value||null);
 function saveLabels(){{const u=URL.createObjectURL(new Blob([JSON.stringify(pairs,null,2)],{{type:'application/json'}}));const a=document.createElement('a');a.href=u;a.download='threshold-audit-labels.json';a.click();setTimeout(()=>URL.revokeObjectURL(u),1000);}}</script>'''
-    (Path(out) / 'review.html').write_text(document)
+    (Path(out) / 'review.html').write_text(document, encoding='utf-8')

@@ -6,10 +6,10 @@ Run from the repository root with `PY_TRAIN`, the environment that has both `ope
 
 | File | Purpose |
 |---|---|
-| `__main__.py` | `prepare`, `inventory` and `run` subcommands |
+| `__main__.py` | `prepare` and `run` subcommands |
 | `selection.py` | Prompt-to-T2I-model assignment, frozen before looking at images; image verification |
 | `policy.py` | System prompt, JSON response schema and strict parser |
-| `examples.py` | Inventory of human-written requests; bank loading; in-context example sampling |
+| `examples.py` | Example bank loading and in-context example sampling |
 | `curated_examples.py` | Builds and validates a merged in-context bank from source-linked choices |
 | `image_inputs.py` | Optional resized API copies of images; originals are never changed |
 | `api.py` | OpenAI-compatible gateway client; no SDK retries, no fallback model |
@@ -51,12 +51,7 @@ Examples are human-written variation requests, kept verbatim. A bank is one of:
 - `{"kind": "reviewed_axis_examples", "reviewer": ..., "examples": [...]}`: records from an inventory, each with `approved: true`, a `review_note` and source metadata (file, line, SHA-256), re-hashed on load. Interactive-session examples need `provenance: "interactive_reviewed"`; images are attached only with `image_reviewed`.
 - `{"kind": "curated_merged_axis_examples", ...}`: a merged bank from `curated_examples.py`. A version-2 plan picks one exact source string per similarity group; a version-1 plan holds edited wording (`provenance: "human_derived_edited"`).
 
-`inventory` collects candidates from human-study response files (`<human-study>/responses_pilot_qwen/*.jsonl`, `<human-study>/responses_pilot_b/*.jsonl`) and an interactive session's `events.jsonl`; its source lists and exclusions are specific to the unreleased study data. `run` refuses an unreviewed inventory.
-
-```bash
-python -m elicitation inventory --human-study <study responses dir> \
-  --study-run <interactive session dir> --out <dir>/human-example-candidates.json
-```
+The banks used for the paper were built from an inventory of the human-study responses, which are not released; `run` refuses a bank whose examples are not reviewed.
 
 Sampling excludes examples whose normalized prompt equals the target's. A reviewed bank is sampled by source group, then participant, without repeating a source prompt; a merged bank uniformly.
 
@@ -91,6 +86,8 @@ python -m elicitation run --assignment $T_DIG_RUNS/axis-elicitation/assignment.j
 # Paid run: --max-calls is required, a cumulative request bound across resumes.
 python -m elicitation run ... --execute --max-calls 40
 ```
+
+`--limit` takes the first N items of the assignment and defaults to 40, a pilot; a full run passes the assignment's size (`--limit 20000` for the default assignment). The selected ids are part of the run identity in `manifest.json`, so a run cannot be extended with a larger `--limit` later: start a full run in its own output directory.
 
 - The API key is read from the variable named by `--api-key-env` (default `LITELLM_API_KEY`).
 - Requests are serial, one per prompt, with no automatic retries. `--retry-errors` resends provider failures; `--retry-uncertain` resends interrupted calls that may have been billed. Refusals, truncations and schema failures with saved replies are not resent.

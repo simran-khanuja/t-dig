@@ -64,7 +64,7 @@ Every launcher sources [scripts/env.sh](scripts/env.sh), which sets these defaul
 | `HF_HOME` | `~/.cache/huggingface` | Hugging Face cache; snapshots are read from `HF_HUB_CACHE` (default `$HF_HOME/hub`). Policies are `Qwen/Qwen3.5-4B`, `Qwen/Qwen3.5-9B`, `Qwen/Qwen3.5-35B-A3B`; TPIPS is `sywang/TPIPS-Embed-Qwen3VL-8B`; VQAScore is `zhiqiulin/clip-flant5-xxl`. |
 | `PY_TRAIN`, `PY_REWARD`, `PY_VQA` | `python` | Interpreters of the three environments. |
 | `T_DIG_SETUP` | unset | Optional file sourced first by every launcher, for site setup (module loads, `LD_LIBRARY_PATH`, CUDA). |
-| `T_DIG_SUBMIT` | `bash` | Submit command stored by `scripts/prepare_training_matrix.py`, e.g. `sbatch --nodes=2 --ntasks-per-node=1 --gpus-per-node=8 --time=72:00:00`. |
+| `T_DIG_SUBMIT` | `bash` | Submit command stored by `scripts/prepare_training_matrix.py`, e.g. `sbatch --nodes=2 --ntasks-per-node=1 --gpus-per-node=8 --time=72:00:00`; `bash` runs the job in the foreground until training finishes. |
 | `T_DIG_NODEFILE`, `T_DIG_REMOTE_LAUNCH`, `T_DIG_JOB_ID` | under Slurm: the job's node list, `srun --nodes=1 --ntasks=1 -w {host} --`, `$SLURM_JOB_ID` | Hosts of a multi-node training job, the command that starts a process on another node, and the run's job id ([axis_grpo/training/README.md](axis_grpo/training/README.md)). |
 
 ### Weights
@@ -130,8 +130,8 @@ Run from the repository root after `source scripts/env.sh`.
    ```
 3. Export the axis rows and split them into prompt-disjoint train and held-out sets ([axis_grpo/README.md](axis_grpo/README.md)):
    ```bash
-   python -m axis_grpo.prepare plan  --assignment <assignment.json> --out $T_DIG_DATA/generation-policy-plan --seed 42 --k 4 --execute
-   python -m axis_grpo.prepare build --plan $T_DIG_DATA/generation-policy-plan --elicitation-run <run> \
+   $PY_REWARD -m axis_grpo.prepare plan  --assignment <assignment.json> --out $T_DIG_DATA/generation-policy-plan --seed 42 --k 4 --execute
+   $PY_REWARD -m axis_grpo.prepare build --plan $T_DIG_DATA/generation-policy-plan --elicitation-run <run> \
      --out $T_DIG_DATA/generation-policy-verbatim --reward-text request --execute
    $PY_REWARD -m axis_grpo.training.split --source $T_DIG_DATA/generation-policy-verbatim \
      --out $T_DIG_DATA/generation-policy-val200-v1 --execute
@@ -190,7 +190,7 @@ On the interactive test set:
 ```bash
 hf download neulab/t-dig-test --repo-type dataset --local-dir $T_DIG_DATA/t-dig-test
 $PY_REWARD -m tdig.test_set --test $T_DIG_DATA/t-dig-test/data/flux2-klein-9b/test.jsonl \
-  --val <dataset>/flux2-klein-9b/val.parquet --t2i-model flux2-klein-9b --out $T_DIG_DATA/tdig/testset-flux2-klein-9b
+  --val <dataset>-customtau/flux2-klein-9b/val.parquet --t2i-model flux2-klein-9b --out $T_DIG_DATA/tdig/testset-flux2-klein-9b
 TRAIN_RUN=... VAL_OUT=... STEPS=... SETS="testset=$T_DIG_DATA/tdig/testset-flux2-klein-9b/testset.parquet" \
   bash tdig/validate_checkpoints.sh
 ```

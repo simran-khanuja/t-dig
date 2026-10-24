@@ -3,6 +3,7 @@
 import hashlib
 from pathlib import Path
 
+from .policy import validate_decisions
 from .storage import atomic_json, digest, prompt_id, read_json
 
 SCHEMA = 2
@@ -86,7 +87,5 @@ def load_input(path, stage, allow_partial=False):
                 "Upstream stage is incomplete; use --allow-partial-input only for a pilot"
             )
         rows = validate_prompts(data.get("kept"))
-        from .policy import validate_decisions
-
         validate_decisions(rows, rows, expected, include_prompt=True)
     return data, [{"id": r["id"], "prompt": r["prompt"]} for r in rows]

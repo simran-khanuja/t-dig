@@ -26,11 +26,7 @@ _MOD = 2**31 - 1
 
 
 def _independent_latents(rs, seed, k, cfg):
-    """Return K latents from K distinct seeds, via render._one_latent.
-
-    These differ from `render_independent`'s seeds (seed, seed+1, ...), which start at the
-    shared seed and would make image 0's independent draw equal the shared one.
-    """
+    """Return K latents from K distinct seeds (offset by _IND_STRIDE), via render._one_latent."""
     return [rs._one_latent((int(seed) + _IND_STRIDE * (i + 1)) % _MOD, cfg) for i in range(k)]
 
 

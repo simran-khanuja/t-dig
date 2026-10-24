@@ -17,7 +17,6 @@ set -euo pipefail
 source "${T_DIG_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}/scripts/env.sh"
 ROOT=$T_DIG_ROOT
 OUT=${SCORE_OUT:?directory holding index.jsonl and sets.jsonl}
-PY_TPIPS=$PY_REWARD
 CACHE=$HF_HUB_CACHE
 TPIPS=${TPIPS_CHECKPOINT:-sywang/TPIPS-Embed-Qwen3VL-8B@86a1493c60121e656a1c075bc7aed88f25fcd4d4}
 cd "$ROOT"
@@ -35,7 +34,7 @@ for i in $(seq 0 $((NG - 1))); do
   PATH="$(dirname "$PY_VQA"):$PATH" CUDA_VISIBLE_DEVICES=${GPUS[$i]} "$PY_VQA" -m tdig.iid_vqa score --out "$OUT" \
     --shard "$i" --num-shards "$NG" --cache "$CACHE" > "$OUT/vqa-shard-$n.log" 2>&1 &
   PIDS+=($!)
-  CUDA_VISIBLE_DEVICES=${GPUS[$i]} "$PY_TPIPS" -m tdig.score_baselines tpips --out "$OUT" \
+  CUDA_VISIBLE_DEVICES=${GPUS[$i]} "$PY_REWARD" -m tdig.score_baselines tpips --out "$OUT" \
     --shard "$i" --num-shards "$NG" --checkpoint "$TPIPS" --cache "$CACHE" > "$OUT/tpips-shard-$n.log" 2>&1 &
   PIDS+=($!)
 done

@@ -82,9 +82,9 @@ def half(base_prompt, fraction):
 
 
 def summarize(rows):
-    """Return the means of one step over `rows`; None when `rows` is empty."""
+    """Return the means of one step over `rows`."""
     if not rows:
-        return None
+        raise ValueError("A half of the set is empty; use more rows or --select-fraction 1")
     valid = [r["metrics"] for r in rows if not r["metrics"].get("malformed")]
     out = {
         "rows": len(rows),

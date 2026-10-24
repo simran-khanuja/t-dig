@@ -22,7 +22,6 @@
     POST /download         {session_id, images}             -> a zip of those images
     GET  /loras?model=...                                   -> the off-axis ladder
     GET  /session/get?session_id=...                        -> the whole session
-    POST /session/feedback {session_id, rating?, text?}     -> stored on the session + logged
     POST /client_event     {session_id?, client_id, events} -> UI-only interactions, logged as "ui"
     POST /client_error     {session_id?, message, stack, ...} -> logged as "client_error"
     POST /study/consent, /study/questionnaire; GET /study/instructions  -> study mode
@@ -65,8 +64,10 @@ Latency:
 import argparse
 import hashlib
 import io
+import json
 import mimetypes
 import os
+import re
 import sys
 import threading
 import time
@@ -76,7 +77,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from axis_framework import cache, client, config, session as S  # noqa: E402
+from axis_framework import cache, client, config, profiles, session as S  # noqa: E402
 from axis_framework.http_util import HttpError, Raw, serve  # noqa: E402
 
 _STATE = {}
@@ -145,8 +146,8 @@ def _render_grid(model, prompts, base_prompt, out_dir, tag, seed=None, **kw):
     """Render K prompts, split across this model's replica pool when there is one.
 
     Returns the same dict shape as a single /render, plus `shards`. Each shard draws on the
-    whole grid's latents (t2i_server._render). `seconds` is wall clock, i.e. the slowest
-    shard.
+    whole grid's latents (t2i_server._render) and writes `<tag>.part<offset>.json`; the merged
+    `<out_dir>/<tag>.json` is written here. `seconds` is wall clock, i.e. the slowest shard.
     """
     pool = _pool_for(model)
     if len(pool) < 2 or len(prompts) < 2:
@@ -194,6 +195,8 @@ def _render_grid(model, prompts, base_prompt, out_dir, tag, seed=None, **kw):
         for i in range(len(cuts))
     ]
     out["seconds"] = round(time.time() - t0, 2)
+    with open(os.path.join(out_dir, f"{tag}.json"), "w") as f:
+        json.dump(out, f, indent=2)
     return out
 
 
@@ -238,10 +241,8 @@ def _edit_grid(model, sources, instructions, out_dir, tag, seed):
         for i in range(len(cuts))
     ]
     out["seconds"] = round(time.time() - t0, 2)
-    import json as _json
-
     with open(os.path.join(out_dir, f"{tag}.json"), "w") as f:
-        _json.dump(out, f, indent=2)
+        json.dump(out, f, indent=2)
     return out
 
 
@@ -268,6 +269,14 @@ def _clamp_alpha(model, alpha):
     if alpha < 1.0 and _caps(model).get("shared_latents") is False:
         return 1.0
     return alpha
+
+
+def _can_merge(model):
+    """An editing run is served and its editor takes several references ("Combine")."""
+    return bool(config.layer_exp_for(model)) and config.model_family(model) in (
+        "flux2klein",
+        "qwen-image",
+    )
 
 
 def _sess(p):
@@ -300,10 +309,7 @@ def _public(s):
     out["can_edit"] = bool(config.layer_exp_for(s.get("model") or _STATE["model"]))
     out["can_keep"] = out["can_edit"]  # edit rounds honour `keep` (see _render_trial)
     out["can_focus"] = out["can_edit"]  # "Vary this" and "Fix this" on single pictures
-    # "Combine" needs an editor that takes several reference images.
-    out["can_merge"] = config.T2I_MODELS.get(s.get("model") or _STATE["model"], {}).get(
-        "family"
-    ) in ("flux2klein", "qwen-image")
+    out["can_merge"] = _can_merge(s.get("model") or _STATE["model"])
     # suggest_pending lets the UI show "still looking" instead of an empty chip list.
     out["suggest_pending"] = st["pending"]
     out["suggest_error"] = st["error"]
@@ -443,18 +449,6 @@ def _apply_keep(t, p):
         ]
 
 
-def _policy_draw(s, axis, kind="gen"):
-    """Return the draw number behind _policy_seed (0-based); the UI shows "Seed: n+1"."""
-    key = "|".join(
-        (
-            " ".join(str(s.get("base_prompt") or "").lower().split()),
-            " ".join(str(axis).lower().split()),
-            kind,
-        )
-    )
-    return int((s.get("policy_draws") or {}).get(key, 0))
-
-
 def _policy_seed(s, axis, kind="gen", bump=False):
     """Return the policy's sampling seed for this session, prompt, axis and *kind*.
 
@@ -478,15 +472,7 @@ def _policy_seed(s, axis, kind="gen", bump=False):
 
 def _served_models():
     """Return the T2I models AXIS_FW_SERVE serves, in order."""
-    from axis_framework import profiles
-
     return list(profiles.served())
-
-
-def _served_summary():
-    from axis_framework import profiles
-
-    return profiles.served()
 
 
 def _grid(s, stage="grid"):
@@ -712,12 +698,10 @@ def _annotate_sidecar(s, t, tag, why):
     source, generate vs edit, K and the diversity setting, so an image folder reads on its own.
     Best-effort: a failure is printed, never raised.
     """
-    import json as _json
-
     fp = os.path.join(_session_dir(s), f"{tag}.json")
     try:
         with open(fp) as f:
-            side = _json.load(f)
+            side = json.load(f)
         side["study"] = {
             "session_id": s["session_id"],
             "participant_id": s.get("user_id"),
@@ -736,7 +720,7 @@ def _annotate_sidecar(s, t, tag, why):
         }
         tmp = fp + ".tmp"
         with open(tmp, "w") as f:
-            _json.dump(side, f, indent=1, ensure_ascii=False, default=str)
+            json.dump(side, f, indent=1, ensure_ascii=False, default=str)
         os.replace(tmp, fp)
     except Exception as e:
         print(f"[orch] could not annotate {fp}: {type(e).__name__}: {e}", flush=True)
@@ -1131,8 +1115,6 @@ def _edit_trial(s, axis, source, off_axis, arm, prev, samp=None, seed=None, focu
     # A described ("tdig") editor run was trained on i.i.d. sets with "overall" among its axes,
     # so for it the i.i.d. set is on-distribution and a policy-varied set is not; a round-one
     # editor is the reverse.
-    from axis_framework import profiles
-
     iid_editor = (profiles.descriptor(exp) or {}).get("format") == "tdig"
     if from_iid and iid_editor:
         src_prompts = list(prev["prompts"])
@@ -1585,7 +1567,7 @@ def route_axis(p):
             samp=_sampling_from(p),
             seed=_policy_seed(s, axis, kind),
         )
-    t["seed"], t["draw"] = _policy_seed(s, axis, kind), _policy_draw(s, axis, kind)
+    t["seed"] = _policy_seed(s, axis, kind)
     if t.get("edit") and t.get("focus") is None:
         _apply_keep(t, p)
     if rephrase:
@@ -1848,7 +1830,7 @@ def route_respin(p):
             samp=_sampling_from(p),
             seed=seed,
         )
-    t["seed"], t["draw"] = seed, _policy_draw(s, axis, kind)
+    t["seed"] = seed
     if t.get("edit") and t.get("focus") is None:
         _apply_keep(t, p)
     _log(
@@ -2068,15 +2050,15 @@ def route_merge(p):
 
     `images` are two or more grid indices; `instruction` optionally says how to combine them.
     The editor gets all chosen pictures as reference images for one output, config.K times. No
-    policy is involved. Only FLUX.2-Klein and Qwen-Image editors take several references
-    (`can_merge`); other T2I models are refused.
+    policy is involved. Refused unless `_can_merge`: an editing run is served and the editor
+    takes several references (FLUX.2-Klein, Qwen-Image).
     """
     s = _sess(p)
     if s["state"] not in (S.REVIEW, S.CHOOSE_AXIS):
         raise HttpError(409, f"combine needs REVIEW or CHOOSE_AXIS (session is {s['state']})")
     model = s.get("model") or _STATE["model"]
-    if config.T2I_MODELS.get(model, {}).get("family") not in ("flux2klein", "qwen-image"):
-        raise HttpError(400, "this T2I model's editor cannot combine pictures")
+    if not _can_merge(model):
+        raise HttpError(400, "this T2I model cannot combine pictures")
     review = s["state"] == S.REVIEW
     prev = S.current_trial(s) if review else _iid_as_round(s)
     imgs = list((prev or {}).get("images") or [])
@@ -2338,8 +2320,6 @@ def route_media(p):
             w = max(64, min(1024, int(w)))
         except (TypeError, ValueError):
             raise HttpError(400, "w must be an integer")
-        import hashlib
-
         h = hashlib.md5(path.encode()).hexdigest()
         prev = os.path.join(config.CACHE, ".previews", h[:2], f"{h}_{w}.jpg")
         if not os.path.exists(prev):
@@ -2506,8 +2486,6 @@ def _suggestions_for(client):
     mode = (_STATE.get("study") or {}).get("suggestions", "on")
     if mode != "split":
         return mode
-    import hashlib
-
     who = client.get("participant_id") or client.get("client_id") or ""
     h = hashlib.sha256(f"{_STATE['arm_salt']}:suggestions:{who}".encode()).digest()[0]
     return "on" if h % 2 == 0 else "off"
@@ -2524,14 +2502,12 @@ def route_client_event(p):
     slider moves, tab visibility, leaving the page). The page flushes a batch every few
     seconds and on hide; each event carries its own client time.
     """
-    import json as _json
-
     events = p.get("events")
     if not isinstance(events, list):
         raise HttpError(400, "events must be a list")
     kept, dropped = [], 0
     for e in events[:_UI_MAX_EVENTS]:
-        if not isinstance(e, dict) or len(_json.dumps(e, default=str)) > _UI_MAX_BYTES:
+        if not isinstance(e, dict) or len(json.dumps(e, default=str)) > _UI_MAX_BYTES:
             dropped += 1
             continue
         kept.append(e)
@@ -2539,43 +2515,6 @@ def route_client_event(p):
     s = _STATE["store"].get(p.get("session_id") or "") or None
     _log("ui", s, client_id=str(p.get("client_id"))[:64], events=kept, dropped=dropped)
     return {"logged": len(kept)}
-
-
-def route_feedback(p):
-    """Store the final screen's optional rating (1-5) and comment on the session and log."""
-    s = _sess(p)
-    rating = p.get("rating")
-    if rating is not None:
-        try:
-            rating = int(rating)
-        except (TypeError, ValueError):
-            raise HttpError(400, "rating must be an integer")
-        if not 1 <= rating <= 5:
-            raise HttpError(400, "rating must be 1-5")
-    text = str(p.get("text") or "")[:5000]
-    fb = {
-        "at": time.time(),
-        "rating": rating,
-        "text": text,
-        "trial": len(s["trials"]) - 1 if s["trials"] else None,
-    }
-    s.setdefault("feedback", []).append(fb)
-    _save(s)
-    _log("feedback", s, **fb)
-    return {"saved": True}
-
-
-_QUESTION_KEYS = (
-    "control_useful",
-    "slider_expected",
-    "mode_preference",
-    "mode_why",
-    "suggestions_use",
-    "suggestions_useful",
-    "experience",
-    "missing",
-    "other",
-)
 
 
 def route_study_consent(p):
@@ -2607,15 +2546,13 @@ def route_study_questionnaire(p):
     if done < st["pictures"]:
         raise HttpError(409, f"{done} of {st['pictures']} pictures done")
     ans = p.get("answers") or {}
-    # Keep any short lower-case key (not only _QUESTION_KEYS), so a new page question needs no
-    # restart. At most 40 keys; string values clipped to 3000 characters.
-    import re as _re
-
+    # Any short lower-case key is kept, so a new page question needs no restart. At most 40
+    # keys; string values clipped to 3000 characters.
     answers = {
         k: (v[:3000] if isinstance(v, str) else v)
         for k, v in list(ans.items())[:40]
         if isinstance(k, str)
-        and _re.fullmatch(r"[a-z][a-z0-9_]{0,39}", k)
+        and re.fullmatch(r"[a-z][a-z0-9_]{0,39}", k)
         and isinstance(v, (str, int, float, bool, type(None)))
     }
     _log(
@@ -2992,7 +2929,7 @@ def main():
             m: {st: config.render_settings(m, st) for st in ("grid", "iid", "accept")}
             for m in (_served_models() or [a.model])
         },
-        serve=_served_summary(),
+        serve=profiles.served(),
         model=a.model,
         cache=not a.no_cache,
         k_choices=list(config.K_CHOICES),
@@ -3032,7 +2969,6 @@ def main():
             ("POST", "/session/respin"): route_respin,
             ("POST", "/client_error"): route_client_error,
             ("POST", "/client_event"): route_client_event,
-            ("POST", "/session/feedback"): route_feedback,
             ("POST", "/study/consent"): route_study_consent,
             ("POST", "/study/questionnaire"): route_study_questionnaire,
             ("GET", "/study/instructions"): route_study_instructions,

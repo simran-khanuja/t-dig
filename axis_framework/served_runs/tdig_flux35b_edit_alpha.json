@@ -14,7 +14,6 @@
   "steps": 4,
   "guidance": 1.0
  },
- "exp": "tdig_flux35b_edit_alpha",
  "task": "layered",
  "vlm": true,
  "limit_images": 4,

@@ -35,50 +35,29 @@ def example_content(row, detail):
     from io import BytesIO
 
     # Participant IDs, telemetry, and source paths are never sent to the provider.
-    content = [
-        {
-            'type': 'text',
-            'text': json.dumps(
-                {
-                    'example_base_prompt': row['prompt'],
-                    'human_requests': row['requests'],
-                    'human_no_variation_reason': row.get('none_reason', ''),
-                    'example_images_supplied': bool(row.get('images')),
-                },
-                ensure_ascii=False,
-            ),
-        }
-    ]
-    if row.get('provenance') == 'human_derived_edited':
-        content = [
-            {
-                'type': 'text',
-                'text': json.dumps(
-                    {
-                        'example_base_prompt': row['prompt'],
-                        'axes': row['requests'],
-                        'example_provenance': 'Axes pooled across human responses and edited; may include requests made after model suggestions. List length is not a target axis count.',
-                        'example_images_supplied': False,
-                    },
-                    ensure_ascii=False,
-                ),
-            }
-        ]
-    if row.get('provenance') == 'human_verbatim_pooled':
-        content = [
-            {
-                'type': 'text',
-                'text': json.dumps(
-                    {
-                        'example_base_prompt': row['prompt'],
-                        'axes': row['requests'],
-                        'example_provenance': 'Verbatim human requests pooled across responses, with similar requests deduplicated. Some followed model suggestions. List length is not a target axis count.',
-                        'example_images_supplied': False,
-                    },
-                    ensure_ascii=False,
-                ),
-            }
-        ]
+    provenance = row.get('provenance')
+    if provenance == 'human_derived_edited':
+        text = dict(
+            example_base_prompt=row['prompt'],
+            axes=row['requests'],
+            example_provenance='Axes pooled across human responses and edited; may include requests made after model suggestions. List length is not a target axis count.',
+            example_images_supplied=False,
+        )
+    elif provenance == 'human_verbatim_pooled':
+        text = dict(
+            example_base_prompt=row['prompt'],
+            axes=row['requests'],
+            example_provenance='Verbatim human requests pooled across responses, with similar requests deduplicated. Some followed model suggestions. List length is not a target axis count.',
+            example_images_supplied=False,
+        )
+    else:
+        text = dict(
+            example_base_prompt=row['prompt'],
+            human_requests=row['requests'],
+            human_no_variation_reason=row.get('none_reason', ''),
+            example_images_supplied=bool(row.get('images')),
+        )
+    content = [{'type': 'text', 'text': json.dumps(text, ensure_ascii=False)}]
     fingerprints = []
     for p in row.get('images', []):
         data = Path(p).read_bytes()
@@ -300,8 +279,6 @@ def run(
             atomic_json(folder / 'request.json', request)
             reply_path = folder / 'reply.json'
             if not reply_path.exists():
-                # The global attempt journal is authoritative, also after an interruption before
-                # the per-item files were written.
                 previous = by_prompt.get(row['id'])
                 if previous:
                     failed = (folder / f"error-{previous['number']:06d}.json").exists()

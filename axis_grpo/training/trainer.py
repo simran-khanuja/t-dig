@@ -230,18 +230,18 @@ class OrderedGRPOTrainer(PPOTrainerSync):
         # Extra early checkpoints: every `tdig.save_freq_early` updates up to update
         # `tdig.save_freq_early_until`, in addition to verl's `trainer.save_freq`. The diversity
         # strength scale draws on adapters from these early updates.
-        early = self.config.tdig.get('save_freq_early', 0)
-        until = self.config.tdig.get('save_freq_early_until', 0)
-        if (
-            early
-            and self.global_steps <= until
-            and self.global_steps % early == 0
-            and self.global_steps % self.config.trainer.save_freq
-        ):
+        early = self.config.tdig.save_freq_early
+        until = self.config.tdig.save_freq_early_until
+        saved = (
+            self.global_steps % self.config.trainer.save_freq == 0
+            or self.global_steps >= self.total_training_steps
+        )
+        if early and self.global_steps <= until and self.global_steps % early == 0 and not saved:
             self._save_checkpoint()
+            saved = True
         stop = self.config.tdig.stop_after_step
         if stop and self.global_steps >= stop:
-            if self.global_steps % self.config.trainer.save_freq:
+            if not saved:
                 self._save_checkpoint()
             self._shutdown_dump_executor()
             raise SmokeStop(f'Bounded test stopped after checkpoint {self.global_steps}')

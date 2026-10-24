@@ -31,7 +31,6 @@ def load_pool(path, allow_partial=False):
 
 
 def seeds_for(ident, seed, index):
-    # Independent of input order, workers, k, and resume boundaries.
     base = int(digest({'prompt_id': ident, 'seed': seed}), 16) % SEED_MODULUS
     latent = (base + index * INDEPENDENT_STRIDE) % SEED_MODULUS
     return (latent - INDEPENDENT_STRIDE) % SEED_MODULUS, latent
@@ -179,8 +178,6 @@ def generate(
     for name in ['k', 'steps', 'resolution']:
         if type(cfg[name]) is not int or cfg[name] <= 0:
             raise ValueError(f'{name} must be a positive integer')
-    if cfg['k'] > SEED_MODULUS:
-        raise ValueError('k exceeds the T2I model seed space')
     if not math.isfinite(cfg['guidance']) or cfg['guidance'] < 0:
         raise ValueError('Guidance must be finite and nonnegative')
     if limit is not None and (type(limit) is not int or limit < 0):

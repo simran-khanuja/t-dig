@@ -48,7 +48,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from axis_framework import config, policy_prompt  # noqa: E402
+from axis_framework import config, policy_prompt, profiles  # noqa: E402
 from axis_framework.http_util import HttpError, serve  # noqa: E402
 
 _STATE = {}
@@ -58,18 +58,10 @@ _TEMPLATE_KW = {"enable_thinking": os.environ.get("ENABLE_THINKING", "False").lo
 _GPU_LOCK = threading.Lock()
 
 
-def _served_models():
-    from axis_framework import profiles
-
-    return list(profiles.served())
-
-
 def _wording(exp):
     """The image-preamble wording run *exp* trained with ("named" if unknown)."""
     if not exp:
         return "named"
-    from axis_framework import profiles
-
     try:
         return profiles.run_info(exp).get("image_axis_wording") or "named"
     except Exception:
@@ -83,7 +75,6 @@ def _as_shown(paths, exp):
     FLUX.2-Klein runs); resizing keeps the policy's image-token count on-distribution.
     """
     from PIL import Image
-    from axis_framework import profiles
 
     res = profiles.run_info(exp)["train"]["resolution"] if exp else None
     out = []
@@ -359,34 +350,7 @@ def route_expand(p):
 
     # off_axis selects the rung (adapter); the reply reports the rung that ran. Absent, the
     # `--lora` adapter answers.
-    off_axis = p.get("off_axis")
-    rung, off_axis_note = None, None
-    if off_axis is not None:
-        if arm == "baseline":
-            # Arm B has no adapter, so off_axis is dropped and the reply says so.
-            off_axis_note = "arm 'baseline' runs the untuned base model, which has no lam"
-            off_axis = None
-        else:
-            ladder = _ladder_for(p.get("exp"))
-            if not ladder:
-                raise HttpError(
-                    503,
-                    "this policy server has no off-axis ladder: no adapters under "
-                    f"{os.path.join(config.FRAMEWORK, 'adapters')} match "
-                    f"{p.get('exp') or _STATE.get('default_exp')}_step*. Run "
-                    f"axis_framework/scripts/export_ladder.sh.",
-                )
-            rung = pick_rung(ladder, float(off_axis))
-            if not _STATE["fake"] and rung.get("lora_request") is None and not rung.get("base"):
-                have = [r["step"] for r in ladder if r["lora_request"] is not None]
-                raise HttpError(
-                    503,
-                    f"off_axis={off_axis} selects step {rung['step']}, whose adapter is not "
-                    f"exported ({rung['path']}). Exported rungs: {have}. Refusing to answer "
-                    f"from a neighbouring checkpoint -- that would be a different policy "
-                    f"than the one asked for, and nothing downstream could tell.",
-                )
-            off_axis = rung["off_axis"]
+    rung, off_axis_note, off_axis = _resolve_off_axis(p.get("off_axis"), arm, p.get("exp"))
 
     messages = policy_prompt.build_messages(
         base_prompt,
@@ -496,13 +460,13 @@ def _use_lora(arm, rung):
 def _resolve_off_axis(off_axis, arm, exp=None):
     """Resolve off_axis to (rung, note, resolved_off_axis) on *exp*'s ladder.
 
-    Used by /expand_many and /edit_plan.
+    Arm "baseline" has no adapter, so off_axis is dropped and the note says so.
     """
     if off_axis is None:
         return None, None, None
     if arm == "baseline":
         return None, "arm 'baseline' runs the untuned base model, which has no lam", None
-    ladder = _ladder_for(exp) if exp else (_STATE.get("ladder") or [])
+    ladder = _ladder_for(exp)
     if not ladder:
         raise HttpError(
             503,
@@ -690,7 +654,10 @@ def route_edit_plan(p):
         raise HttpError(400, "base_prompt, axis_a and axis_b are required")
     if not srcp:
         raise HttpError(400, "source_prompts is required")
-    vlm = config.run_is_vlm(p.get("exp")) if p.get("exp") else config.policy_is_vlm()
+    exp = p.get("exp")
+    if not exp:
+        raise HttpError(400, "exp is required: name the round-two ladder to answer from")
+    vlm = config.run_is_vlm(exp)
     if vlm and len(srci) != len(srcp):
         raise HttpError(
             400, f"vision policy: {len(srci)} source_images for " f"{len(srcp)} source_prompts"
@@ -698,9 +665,6 @@ def route_edit_plan(p):
     arm = p.get("arm", "ours")
     if arm not in ("ours", "baseline"):
         raise HttpError(400, f"unknown arm {arm!r}")
-    exp = p.get("exp")
-    if not exp:
-        raise HttpError(400, "exp is required: name the round-two ladder to answer from")
     k = len(srcp)
     temperature = float(p.get("temperature", config.TEMPERATURE))
     top_p = None if p.get("top_p") is None else float(p["top_p"])
@@ -795,7 +759,7 @@ def route_health(_p):
         "ladder": [r["step"] for r in ladder if r["available"]],
         "ladder_missing": [r["step"] for r in ladder if not r["available"]],
         "vlm": config.policy_is_vlm(),
-        "layer_exps": sorted(e for e in (config.layer_exp_for(m) for m in _served_models()) if e),
+        "layer_exps": sorted(e for e in (config.layer_exp_for(m) for m in profiles.served()) if e),
         "profile": _STATE.get("profile"),
     }
 
@@ -846,11 +810,9 @@ def main():
         help="no GPU: templated prompts, for driving the loop end to end",
     )
     a = ap.parse_args()
-
-    from axis_framework import profiles
-
-    if not a.fake:
-        profiles.require_served()
+    if a.fake:
+        os.environ["AXIS_FW_FAKE"] = "1"
+    profiles.require_served()
     a.model = a.model or profiles.policy_base()
     a.lora_rank = a.lora_rank or profiles.policy_lora_rank()
     a.max_model_len = a.max_model_len or profiles.policy_max_model_len()
@@ -867,7 +829,7 @@ def main():
     _STATE["fake"] = a.fake
     _STATE["base_model"] = a.model
     # One ladder per served T2I model, all as adapters on one vLLM engine.
-    served = _served_models()
+    served = list(profiles.served())
     default_exp = config.off_axis_exp_for(served[0]) if served else ""
     _STATE["default_exp"] = default_exp
     exps = (

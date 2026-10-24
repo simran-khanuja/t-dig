@@ -207,8 +207,9 @@ def index_validation(val_outs, out):
                         base_prompt=r["base_prompt"],
                         own_prompts=None if editing else parse_prompts(r["completion"], r["k"]),
                         paths=[str(p.resolve()) for p in paths],
-                        # Only held-out axis rows carry their own threshold; elsewhere the
-                        # logged value is the configured fallback, not a property of the row.
+                        # Rows of sets named heldout* or probe* carry their own threshold;
+                        # elsewhere the logged value is the configured fallback, not a
+                        # property of the row (tdig/README.md, "Checkpoint validation").
                         align_thresh=(
                             r["metrics"].get("fidelity_threshold")
                             if path.stem.startswith(("heldout", "probe"))
@@ -296,8 +297,8 @@ class Scorers:
         import numpy as np
 
         torch = self.torch
-        # Resized one at a time so a set may mix sizes (API T2I models such as Gemini vary the
-        # aspect ratio); for same-size images this equals resizing the stacked batch.
+        # Resized one at a time so a set may mix sizes; for same-size images this equals
+        # resizing the stacked batch.
         pixels = torch.cat(
             [
                 torch.nn.functional.interpolate(

@@ -10,6 +10,13 @@ from hpdv2.storage import atomic_json, read_json
 from .protocol import QUALITY_SCORER, seed_for
 
 
+def fastest(measurements):
+    usable = [v for v in measurements if 'images_per_second' in v]
+    if not usable:
+        raise ValueError('The T2I model does not fit at the smallest render batch')
+    return max(usable, key=lambda v: v['images_per_second'])
+
+
 def probe(config, out):
     import torch
     from .backend import GPUBackend
@@ -66,9 +73,7 @@ def probe(config, out):
             torch.cuda.empty_cache()
             break
         atomic_json(out / 'render-benchmark.json', measurements)
-    best = max(
-        (v for v in measurements if 'images_per_second' in v), key=lambda v: v['images_per_second']
-    )
+    best = fastest(measurements)
     backend.render_batch = best['batch_size']
     groups = backend.render([item])
     images = groups[0]
@@ -85,22 +90,18 @@ def probe(config, out):
     if delta > 0.01:
         raise RuntimeError(f'TPIPS batch parity exceeded tolerance: {delta}')
     alignment = backend.alignment(groups, [item])[0]
-    # Pass the arguments the reward service passes. The probe item has no quality_thresh, so the
-    # mean of its own HPSv3 scores stands in; the quality term then runs and costs nothing.
+    # The mean of the item's own HPSv3 scores stands in for quality_thresh, so the quality term
+    # runs and costs nothing.
     quality = {}
     if 'quality_weight' in config['reward']:
         values = backend.tracked(images, item['base_prompt'])[QUALITY_SCORER]
-        quality = dict(
-            quality=values, quality_threshold=item.get('quality_thresh', sum(values) / len(values))
-        )
+        quality = dict(quality=values, quality_threshold=sum(values) / len(values))
     rewards = score(
         embeddings[-1]['vectors'],
         alignment,
         item['tpips_factor'],
         config['reward'],
-        threshold=item.get('align_thresh'),
         prompts=item['prompts'],
-        length_cap=item.get('length_cap'),
         **quality,
     )
     # Identical prompts with the set's shared seed must give the same image, within 1 pixel level.
@@ -140,9 +141,7 @@ def probe(config, out):
             validation.append(dict(batch_size=batch, error='out_of_memory'))
             torch.cuda.empty_cache()
             break
-    val_best = max(
-        (v for v in validation if 'images_per_second' in v), key=lambda v: v['images_per_second']
-    )
+    val_best = fastest(validation)
     result = dict(
         renderer=config['renderer'],
         settings=config['render'],

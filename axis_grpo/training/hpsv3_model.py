@@ -15,7 +15,8 @@ ImageReward truncate the prompt at 77 tokens (35 for ImageReward); HPSv3 does no
 only preference metric here that scores a 60-80 word policy prompt in full.
 
 Scale: the head emits (mu, sigma), an uncertainty-aware Bradley-Terry parameterisation. `mu` is
-the score: unbounded, centred near 0, higher is better. `score()` returns mu only.
+the score: unbounded, about 5 to 16 on these T2I models, higher is better. `score()` returns mu
+only.
 
 Checkpoint: `MizzenAI/HPSv3` ships one 16.6 GB safetensors with the whole model (backbone,
 vision tower, lm_head, rm_head). The Qwen2-VL-7B repo supplies only the config, tokenizer and
@@ -114,11 +115,7 @@ def _smart_resize(height, width, factor=_FACTOR, min_pixels=PIXELS, max_pixels=P
 
 
 def checkpoint_path():
-    """Return the local path to HPSv3.safetensors.
-
-    AXIS_HPSV3_CKPT overrides. Otherwise the file comes from the HF cache, which the prefetch
-    job fills because compute nodes have no outbound network.
-    """
+    """Return the local path to HPSv3.safetensors: AXIS_HPSV3_CKPT, else the HF cache."""
     p = os.environ.get("AXIS_HPSV3_CKPT")
     if p:
         return p
@@ -270,7 +267,6 @@ def score(model, processor, images, prompts, device):
         images=pil,
         padding=True,
         return_tensors="pt",
-        videos_kwargs={"do_rescale": True},
     )
     batch = {k: (v.to(device) if torch.is_tensor(v) else v) for k, v in batch.items()}
 

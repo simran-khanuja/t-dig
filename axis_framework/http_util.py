@@ -162,18 +162,3 @@ def post_json(url, obj, timeout=1800, retries=0):
 def get_json(url, timeout=30):
     with urllib.request.urlopen(url, timeout=timeout) as r:
         return json.loads(r.read())
-
-
-def wait_healthy(url, timeout=1800, interval=10, label=""):
-    """Block until <url>/health answers with ready, or raise RuntimeError after *timeout* s."""
-    t0 = time.time()
-    err = None
-    while time.time() - t0 < timeout:
-        try:
-            h = get_json(url.rstrip("/") + "/health", timeout=10)
-            if h.get("ready", True):
-                return h
-        except Exception as e:  # not up yet
-            err = e
-        time.sleep(interval)
-    raise RuntimeError(f"{label or url} never became healthy ({err})")

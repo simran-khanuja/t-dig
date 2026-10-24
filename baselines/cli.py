@@ -77,5 +77,5 @@ def main(argv=None):
                 args.device,
             )
         print(json.dumps(result, indent=2, allow_nan=False))
-    except (ValueError, OSError, KeyError) as error:
+    except (ValueError, OSError) as error:
         p.exit(2, f"error: {error}\n")

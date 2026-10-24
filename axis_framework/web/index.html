@@ -1260,11 +1260,13 @@ function feedbackTip(ratings, comment, axis) {
   return null;
 }
 
-// Move the slider one rung and repaint it, so a tip button does what it says.
+// Move the slider one rung (0.05 of alpha on an alpha ladder) and repaint it, so a tip button
+// does what it says.
 function nudgeSlider(el, delta) {
   const oa = el.querySelector('#oa');
   if (!oa) return;
-  oa.value = Math.max(1, Math.min(LADDER.length, (+oa.value || 1) + delta));
+  if (oa.dataset.alpha) oa.value = Math.max(0, Math.min(1, Math.round(((+oa.value || 0) + 0.05 * delta) * 20) / 20));
+  else oa.value = Math.max(1, Math.min(LADDER.length, (+oa.value || 1) + delta));
   oa.oninput();
   oa.scrollIntoView({behavior: 'smooth', block: 'center'});
 }
@@ -1621,62 +1623,10 @@ function screenReview() {
   return el;
 }
 
-function screenDone() {
-  if (STUDY.on) return screenStudyDone();
-  const t = S.trials.length ? S.trials[S.trials.length - 1] : null;
-  const took = t && t.decision === 'accept';
-  // Feedback is asked here only when there was no review page ("no variety needed").
-  const reviewed = !!(t && t.decision);
-  const el = $(`<div class="card final">
-    <p class="eyebrow">Finished</p>
-    <h2>${took ? 'Here they are' : 'Thanks'}</h2>
-    ${took
-      ? '<p class="lede">Re-made at full quality. Right-click any picture to save it.</p>'
-      : reviewed
-        ? ''
-        : '<p class="lede">You said these outputs did not need more variety — that is a useful answer too.</p>'}
-    ${took ? `<div class="grid k${t.images.length}">${t.images.map(img).join('')}</div>` : ''}
-    <div class="feedback" style="margin-top:22px" ${reviewed ? 'hidden' : ''}>
-      <p class="eyebrow">Optional</p>
-      <p class="lede" style="margin-bottom:8px">How well did this get you the variety you wanted?</p>
-      <div class="row" id="rate">${[1, 2, 3, 4, 5].map(n =>
-        `<button class="btn" data-r="${n}">${n}</button>`).join('')}
-        <span class="hint">1 = not at all, 5 = exactly</span></div>
-      <textarea id="fbtext" rows="3" style="width:100%;margin-top:10px;box-sizing:border-box"
-        placeholder="Anything that worked well, was confusing, or that you wished it did?"></textarea>
-      <div class="row" style="margin-top:8px">
-        <button class="btn" id="fbsend">Send feedback</button>
-        <span class="hint" id="fbmsg"></span>
-      </div>
-    </div>
-    <div class="row" style="margin-top:20px">
-      <button class="btn gen" id="again">Start another picture</button>
-    </div>
-  </div>`);
-  let rating = null;
-  el.querySelectorAll('#rate button').forEach(b => b.onclick = () => {
-    rating = +b.dataset.r;
-    el.querySelectorAll('#rate button').forEach(x => x.classList.toggle('gen', x === b));
-  });
-  el.querySelector('#fbsend').onclick = async () => {
-    const text = el.querySelector('#fbtext').value.trim();
-    if (rating == null && !text) { el.querySelector('#fbmsg').textContent = 'Pick a number or write something first.'; return; }
-    try {
-      const r = await fetch('session/feedback', {method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({session_id: S.session_id, rating, text})});
-      if (!r.ok) throw new Error((await r.json()).error || r.statusText);
-      el.querySelector('#fbsend').disabled = true;
-      el.querySelector('#fbmsg').textContent = 'Thank you — saved.';
-    } catch (e) { el.querySelector('#fbmsg').textContent = 'Could not save: ' + e.message; }
-  };
-  el.querySelector('#again').onclick = () => start();
-  return el;
-}
-
 // ---------------------------------------------------------------- study mode
 
-// One finished session is one picture, counted once per session id.
+// One finished session is one picture, counted once per session id. Only study mode reaches
+// DONE: the open demo answers the gate itself and stays in REVIEW.
 function screenStudyDone() {
   // Only a varied picture counts: "No, these are fine" is recorded but yields no axis.
   const varied = S.needs_diversity !== false;
@@ -1885,7 +1835,7 @@ function render() {
   paintSteps();
   if (!S) return;
   const by = {START: screenStart, GATE: screenGate, CHOOSE_AXIS: screenAxis,
-              REVIEW: screenReview, DONE: screenDone};
+              REVIEW: screenReview, DONE: screenStudyDone};
   // #err lives outside #app, so clear it whenever the state changes.
   if (S.state !== shownState) {
     document.getElementById('err').textContent = '';
@@ -2059,7 +2009,7 @@ function screenParticipant() {
     const v = el.querySelector('#pid').value.trim().slice(0, 120);
     if (!v || (STUDY.on && !/^[A-Za-z0-9]{12,40}$/.test(v))) {
       if (STUDY.on) document.getElementById('err').textContent =
-        'That does not look like a Prolific ID (24 letters and digits). Please check it.';
+        'That does not look like a Prolific ID (12 to 40 letters and digits). Please check it.';
       el.querySelector('#pid').focus(); return;
     }
     document.getElementById('err').textContent = '';

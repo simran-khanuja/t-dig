@@ -227,12 +227,12 @@ OVERALL_B_VLM_FOR = {"edit": INSTRUCTION_VLM_OVERALL_B, "sdedit": INSTRUCTION_SD
 def edit_kind(family):
     """Return "edit" or "sdedit" for *family*, from render.EDIT_MODELS.
 
-    Raises ``SystemExit`` if the family has no editor. EDIT_MODELS is imported so the
+    Raises ``ValueError`` if the family has no editor. EDIT_MODELS is imported so the
     template and the serving pipeline agree.
     """
     from axis_framework.backend.render import EDIT_MODELS
 
     spec = EDIT_MODELS.get(family)
     if spec is None:
-        raise SystemExit(f"no editor for family {family!r}; have {sorted(EDIT_MODELS)}")
+        raise ValueError(f"no editor for family {family!r}; have {sorted(EDIT_MODELS)}")
     return spec["instruction"]

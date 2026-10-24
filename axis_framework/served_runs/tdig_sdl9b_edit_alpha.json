@@ -14,7 +14,6 @@
   "steps": 40,
   "guidance": 4.5
  },
- "exp": "tdig_sdl9b_edit_alpha",
  "task": "layered",
  "vlm": true,
  "limit_images": 4,

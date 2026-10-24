@@ -52,8 +52,6 @@ def recap(row, t2i_model, cap, relative=None):
         )
     ]
     e["instruction_version"] = VERSION_SHORT
-    if row.get("images"):
-        e["image_instruction_version"] = VERSION_SHORT
     return row
 
 

@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 import random
 
+from baselines.assets import seed_for
 from elicitation.policy import parse
 from elicitation.selection import T2I_MODELS, load_assignment
 from hpdv2.storage import canonical, digest, prompt_id, read_json
@@ -161,7 +162,7 @@ def read_record(folder, row, assignment, reward_text='request'):
     if reward_text not in {'request', 'tpips_factor'}:
         raise ValueError('Unknown reward text choice')
     recovered = not result_path.exists()
-    if not result_path.exists():
+    if recovered:
         if (folder / "reply.json").exists():
             reply = read_json(folder / "reply.json")
             if reply.get('refusal') or reply.get('finish_reason') != 'stop':
@@ -205,8 +206,6 @@ def read_record(folder, row, assignment, reward_text='request'):
         raise ValueError("Result differs from saved raw reply")
     manifest = assignment['manifests'][row['renderer']][str(row['shard'])]
     cfg = manifest['config']
-    from baselines.assets import seed_for
-
     images = request['images']
     if len(images) != 4:
         raise ValueError("Expected four image audit records")

@@ -5,7 +5,6 @@ set -euo pipefail
 cd "${1:?frozen source}"
 export T_DIG_ROOT="$1"
 source "$1/scripts/env.sh"
-export PYTHONPATH="$1"
 export OMP_NUM_THREADS=4 MKL_NUM_THREADS=4
 if [ -n "${5:-}" ]; then export T_DIG_JOB_ID="$5"; fi
 # A further node can inherit node zero's GPU UUID list; unset it so fleet.py lists the

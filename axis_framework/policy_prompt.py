@@ -252,7 +252,8 @@ def build_layer_messages(
     and by whether the policy sees images.
 
     Raises:
-        ValueError: both axes are "overall" (never in training).
+        ValueError: both axes are "overall" (never in training), or the T2I model's family
+            has no editor.
     """
     fb = _tdig(exp)
     if fb:

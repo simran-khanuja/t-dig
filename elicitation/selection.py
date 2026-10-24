@@ -87,7 +87,7 @@ def prepare(render_root, out, per_t2i_model=5000, seed=42):
             dict(
                 prompts=len(selected),
                 images=4 * len(selected),
-                by_renderer=dict(Counter(r['renderer'] for r in selected)),
+                by_t2i_model=dict(Counter(r['renderer'] for r in selected)),
                 unused=len(unused),
                 image_readiness='not used for selection',
                 assignment_hash=digest(value),

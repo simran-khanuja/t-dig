@@ -25,7 +25,7 @@ Derived values and their sources in a round-one run's log:
   editor kind     the T2I model family (render.EDIT_MODELS)
 
 Overrides: AXIS_FW_<STAGE>_{RESOLUTION,STEPS,GUIDANCE} (STAGE = GRID, IID, EDIT, ACCEPT)
-replace a derived value for every T2I model. /health reports them.
+replace a derived value for every T2I model; render_settings() lists them under `overridden`.
 
 A run with no descriptor or log, or served runs that disagree on a shared value (one policy
 process holds one base model), is an error at startup.

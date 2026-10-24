@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -28,8 +29,6 @@ def integer(minimum):
 
 def positive_float(text):
     value = float(text)
-    import math
-
     if not math.isfinite(value) or value <= 0:
         raise argparse.ArgumentTypeError("must be finite and positive")
     return value

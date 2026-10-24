@@ -1,5 +1,5 @@
 {
-  "_doc": "T2I models the framework may load. DATA, not code: add a model by adding an entry. `path` is relative to $AXIS_MODELS. `family` is a key of backend/render.py's MODEL_FAMILIES (pipeline class, latent packing) and EDIT_MODELS (its image editor). `iid_dir` is where a round-one run's i.i.d. sets for that T2I model live, relative to $T_DIG_RUNS/axis_grpo/iid ('.' for the top level). Render SETTINGS are not here: they are read from the training run being served (profiles.render_settings).",
+  "_doc": "T2I models the framework may load. DATA, not code: add a model by adding an entry. `path` is relative to $T_DIG_MODELS (config.MODELS). `family` is a key of backend/render.py's MODEL_FAMILIES (pipeline class, latent packing) and EDIT_MODELS (its image editor). `iid_dir` is where a round-one run's i.i.d. sets for that T2I model live, relative to $T_DIG_RUNS/axis_grpo/iid ('.' for the top level). Render SETTINGS are not here: they are read from the training run being served (profiles.render_settings).",
   "sd35-medium": {
     "label": "SD3.5-Medium",
     "path": "sd35-medium",

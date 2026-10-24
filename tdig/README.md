@@ -25,7 +25,7 @@ Run every command from the repository root after `source scripts/env.sh`; each l
 | `validate_checkpoints.py`, `validate_checkpoints.sh` | Score saved checkpoints on held-out prompt sets |
 | `select_frontier.py` | Order checkpoints on the alignment-diversity frontier into a strength scale |
 | `paper_metrics.py`, `paper_metrics.sh` | Every paper metric, for baseline sets and policy checkpoints |
-| `scorers/` | PickScore v1 and HPSv3 loaders |
+| `scorers/` | PickScore v1 loader (HPSv3 is loaded by `axis_grpo/training/hpsv3_model.py`) |
 
 ## Dataset pipeline
 
@@ -101,7 +101,7 @@ Fields added to `extra_info`:
 
 ### Hard-contrastive filter
 
-A *hard-contrastive* axis names something the images must not show. `build_dataset. is_hard_contrastive` flags an axis that contains `instead of`, `rather than` or `without` (except `with or without`, `with and without`, `with/without`), or starts with `Remove` (case-insensitive). The reward cannot score these: diversity is conditioned on the axis text and fidelity on the base prompt, so for "full-body shots rather than portraits" a set with one portrait scores higher than four full-body shots. Axes that only add something ("Include tennis players") stay in training.
+A *hard-contrastive* axis names something the images must not show. `build_dataset.is_hard_contrastive` flags an axis that contains `instead of`, `rather than` or `without` (except `with or without`, `with and without`, `with/without`), or starts with `Remove` (case-insensitive). The reward cannot score these: diversity is conditioned on the axis text and fidelity on the base prompt, so for "full-body shots rather than portraits" a set with one portrait scores higher than four full-body shots. Axes that only add something ("Include tennis players") stay in training.
 
 ## Instruction
 
@@ -147,7 +147,7 @@ The prepare, preflight and submit steps are in [axis_grpo/training/README.md](..
 | `--length-weight 0.1` | `0` | Subtract `w * mean_i min(3, max(0, words_i - cap) / cap)` |
 | `--length-cap 30` | T2I model family's cap | `cap`: 60 for SD3.5, 150 for Klein and Qwen, 30 for edit instructions; a row's `length_cap` wins. Set it to a recapped dataset's cap |
 | `--quality-weight 0.05`, `--quality-margin 1.0` | `0`, `1.0` | Subtract `w * mean_i min(6, max(0, quality_thresh - margin - h_i))`, `h_i` the HPSv3 of image `i`; needs `hpsv3` tracked and `quality_thresh` |
-| `--sizes 9B` | `4B 9B` | From `2B`, `4B`, `9B`, `35B-A3B` (rollout tensor parallel 2; MLP LoRA reaches the shared expert only) |
+| `--sizes 9B` | `4B 9B` | From `4B`, `9B`, `35B-A3B` (rollout tensor parallel 2; MLP LoRA reaches the shared expert only) |
 | `--lora mixer` | `all` | `all`: 12 module types (attention, linear-attention, MLP); `mixer`: the 9 without MLP |
 | `--validation offline` | `inline` | Score checkpoints with `validate_checkpoints.sh` instead of pausing training |
 | `--track-metrics imagereward hpsv3 clip_score aesthetic` | none | Logged scores |
@@ -181,6 +181,8 @@ $PY_REWARD -m tdig.heldout_bundle \
 | Contrastive probe | `<dataset>/<variant>/probe-contrastive.parquet` | hard-contrastive axes |
 | COCO-250 | `<eval sets>/<variant>/coco250.parquet` | `overall` |
 
+Name a set `heldout*` or `probe*` in `SETS` when its rows carry their own `align_thresh` (a `-customtau` dataset): `paper_metrics.py index-validation` keeps the per-row threshold, and with it `fidelity_penalty` and `reward`, only for sets named so; other sets log the configured fallback, which is not a property of the row.
+
 `python -m tdig.eval_sets --benchmark coco250 --out <eval sets>` writes the COCO-250 rows (`--iid-run` supplies the image variant's input images). They carry no `align_thresh`, so they use `--tau`; for a run with the quality term add `quality_thresh` with `tdig.eval_sets_quality`.
 
 ```bash
@@ -200,11 +202,11 @@ Outputs per step and set: `<out>/step_<N>/<set>.jsonl` (per row: `row_id`, `base
 - Validation directories with the same name pool into one run; they must share parquet, seeds and reward configuration. Only completed steps are read, so reruns are safe while jobs write.
 
 ```bash
-$PY_REWARD tdig/select_frontier.py $T_DIG_RUNS/tdig/<validation dir>/*/ \
+$PY_VQA tdig/select_frontier.py $T_DIG_RUNS/tdig/<validation dir>/*/ \
   [$T_DIG_RUNS/tdig/<more steps of the same runs>/*/] --out $T_DIG_RUNS/tdig/frontier-v1
 ```
 
-Outputs: `frontier.json`, `frontier.csv` and `frontier.png` (needs matplotlib; `--no-plot` skips it).
+Outputs: `frontier.json`, `frontier.csv` and `frontier.png` (matplotlib is in the VQA environment only; `--no-plot` skips it).
 
 ## Editing policy
 

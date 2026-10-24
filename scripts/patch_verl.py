@@ -1,10 +1,11 @@
-"""Apply the one-line fix the GRPO trainer needs to the installed verl's V1 trainer.
+"""Add one guard to the installed verl's V1 trainer so that it matches runtime.lock.json.
 
 With LoRA the reference policy is the actor with its adapter disabled (`ref_in_actor`), so verl
 registers no separate reference worker group. `init_workers` in `trainer/ppo/v1/trainer_base.py`
-still looks that group up, and every LoRA run with the KL loss stops at startup with
-`KeyError: 'actor_rollout_ref'`. verl's V0 trainer has the `not self.ref_in_actor` guard; this
-script adds it to the V1 trainer.
+still looks that group up, and a LoRA run with `use_kl_loss` or `use_kl_in_reward` stops at
+startup with `KeyError: 'actor_rollout_ref'`. verl's V0 trainer has the `not self.ref_in_actor`
+guard; this script adds it to the V1 trainer. The release configurations use neither KL term, so
+the guard is never reached; it is applied because runtime.lock.json hashes the patched file.
 
 Run it once with the training interpreter after installing requirements/train.txt:
 

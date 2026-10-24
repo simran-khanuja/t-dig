@@ -2,9 +2,8 @@ import argparse
 import json
 import os
 
-from hpdv2.storage import atomic_json, read_json
+from hpdv2.storage import read_json
 from .selection import prepare
-from .examples import inventory
 from .runner import run
 
 
@@ -18,10 +17,6 @@ def main():
     p.add_argument('--out', required=True)
     p.add_argument('--per-t2i-model', type=int, default=5000)
     p.add_argument('--seed', type=int, default=42)
-    p = commands.add_parser('inventory')
-    p.add_argument('--human-study', required=True)
-    p.add_argument('--study-run', required=True)
-    p.add_argument('--out', required=True)
     p = commands.add_parser('run')
     for name in ('assignment', 'examples', 'config', 'out'):
         p.add_argument('--' + name, required=True)
@@ -34,11 +29,7 @@ def main():
     args = parser.parse_args()
     if args.command == 'prepare':
         result = prepare(args.render_root, args.out, args.per_t2i_model, args.seed)
-        print(json.dumps({'selected': len(result['items']), 'per_renderer': args.per_t2i_model}))
-    elif args.command == 'inventory':
-        result = inventory(args.human_study, args.study_run)
-        atomic_json(args.out, result)
-        print(json.dumps({'counts': result['counts'], 'excluded': result['excluded']}))
+        print(json.dumps({'selected': len(result['items']), 'per_t2i_model': args.per_t2i_model}))
     else:
         result = run(
             args.assignment,

@@ -39,21 +39,21 @@ for exp in "${EXPS[@]}"; do
   folder=${SOURCE[$exp]:?unknown ladder $exp}
   src=$CHECKPOINTS/$folder
   [ -f "$src/adapter_model.safetensors" ] || { echo "missing $src/adapter_model.safetensors"; exit 1; }
-  for a in $(seq 5 5 200); do
-    dst=adapters/${exp}_step$a/lora_adapter
-    [ -f "$dst/adapter_model.safetensors" ] && continue
-    mkdir -p "$dst"
-    "$PY_TRAIN" - "$src" "$dst" "$a" <<'PY'
-import sys, json, shutil
+  "$PY_TRAIN" - "$src" "$exp" <<'PY'
+import sys, os, json, shutil
 from safetensors.torch import load_file, save_file
-src, dst, a = sys.argv[1], sys.argv[2], int(sys.argv[3]) / 100
+src, exp = sys.argv[1], sys.argv[2]
 t = load_file(f"{src}/adapter_model.safetensors")
-for k in t:
-    if "lora_B" in k: t[k] = (t[k].float() * a).to(t[k].dtype)
-save_file(t, f"{dst}/adapter_model.safetensors", metadata={"format": "pt"})
-shutil.copy(f"{src}/adapter_config.json", f"{dst}/adapter_config.json")
-json.dump({"source": src, "alpha": a}, open(f"{dst}/scale.json", "w"))
+for n in range(5, 201, 5):
+    dst = f"adapters/{exp}_step{n}/lora_adapter"
+    if os.path.exists(f"{dst}/adapter_model.safetensors"):
+        continue
+    os.makedirs(dst, exist_ok=True)
+    a = n / 100
+    scaled = {k: (v.float() * a).to(v.dtype) if "lora_B" in k else v for k, v in t.items()}
+    save_file(scaled, f"{dst}/adapter_model.safetensors", metadata={"format": "pt"})
+    shutil.copy(f"{src}/adapter_config.json", f"{dst}/adapter_config.json")
+    json.dump({"source": src, "alpha": a}, open(f"{dst}/scale.json", "w"))
 PY
-  done
   echo "$exp: $(ls -d adapters/${exp}_step* | wc -l) rungs from $src"
 done

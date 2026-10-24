@@ -97,7 +97,6 @@ def main(argv=None):
             or not args.t2i_model_revision.strip()
         ):
             raise ValueError('Model, checkpoint path and revision must be nonempty')
-        # The run manifest keeps its stored field names `render_url` and `renderer_revision`.
         cfg = {
             name: getattr(args, name)
             for name in [

@@ -113,13 +113,6 @@ def build_index(runs, out):
     return dict(images=len(images), sets=len(sets), groups=dict(summary))
 
 
-def _factors(item):
-    """Return the factor entries of one set; a `sets.jsonl` line without `factors` means `overall`."""
-    return item.get("factors") or [
-        dict(row_id=item["prompt_id"], factor="overall", axis_kind="overall", contrastive=False)
-    ]
-
-
 def score_tpips(out, shard, num_shards, checkpoint, cache, device):
     """Compute TPIPS diversity for every `num_shards`-th set, starting at `shard`, once per factor.
 
@@ -144,12 +137,12 @@ def score_tpips(out, shard, num_shards, checkpoint, cache, device):
     todo = _read_jsonl(out / "sets.jsonl")[shard::num_shards]
     target = out / f"tpips-{shard:02d}.jsonl"
     done = (
-        {(r["group"], r["prompt_id"], r.get("row_id", r["prompt_id"])) for r in _read_jsonl(target)}
+        {(r["group"], r["prompt_id"], r["row_id"]) for r in _read_jsonl(target)}
         if target.exists()
         else set()
     )
     pending = lambda item: [
-        f for f in _factors(item) if (item["group"], item["prompt_id"], f["row_id"]) not in done
+        f for f in item["factors"] if (item["group"], item["prompt_id"], f["row_id"]) not in done
     ]
     todo = [r for r in todo if pending(r)]
     print(f"tpips shard {shard}/{num_shards}: {len(todo)} sets to score", flush=True)
@@ -221,7 +214,7 @@ def merge(out, num_shards):
             raise ValueError(f"TPIPS shard {shard} is unfinished")
         tp.update(
             {
-                (r["group"], r["prompt_id"], r.get("row_id", r["prompt_id"])): r
+                (r["group"], r["prompt_id"], r["row_id"]): r
                 for r in _read_jsonl(out / f"tpips-{shard:02d}.jsonl")
             }
         )
@@ -230,7 +223,7 @@ def merge(out, num_shards):
         key = (item["group"], item["prompt_id"])
         if key not in vqa:
             raise ValueError(f"Set without VQAScore: {key}")
-        for entry in _factors(item):
+        for entry in item["factors"]:
             if key + (entry["row_id"],) not in tp:
                 raise ValueError(f"Set without TPIPS diversity: {key + (entry['row_id'],)}")
             d = tp[key + (entry["row_id"],)]

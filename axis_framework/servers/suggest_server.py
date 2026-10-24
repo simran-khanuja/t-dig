@@ -27,6 +27,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from axis_framework import config  # noqa: E402
+from axis_framework.backend import suggest  # noqa: E402
 from axis_framework.http_util import HttpError, serve  # noqa: E402
 
 _STATE = {}
@@ -332,14 +333,13 @@ def route_suggest(p):
             "prompt text alone does not carry that (suggest.SYSTEM)",
         )
 
-    ea = _STATE["ea"]
     retries = int(p.get("retries", 3))
     # `exclude` lists rejected axes. Ask for k + len(exclude) so they can be dropped.
     ask_k = k + len(exclude)
     content = [{"type": "image", "image": f"file://{os.path.abspath(fp)}"} for fp in images]
-    content.append({"type": "text", "text": ea.USER_TMPL.format(prompt=base_prompt)})
+    content.append({"type": "text", "text": suggest.USER_TMPL.format(prompt=base_prompt)})
     messages = [
-        {"role": "system", "content": ea.SYSTEM.format(k=ask_k)},
+        {"role": "system", "content": suggest.SYSTEM.format(k=ask_k)},
         {"role": "user", "content": content},
     ]
 
@@ -347,7 +347,7 @@ def route_suggest(p):
         found, raw = None, ""
         for _ in range(retries + 1):
             raw = _ask(messages, max_new_tokens=400, temperature=float(p.get("temperature", 0.7)))
-            found = ea.parse(raw)
+            found = suggest.parse(raw)
             if found is not None:
                 break
         if found is None:
@@ -395,12 +395,8 @@ def main():
 
     _STATE["fake"] = a.fake
     _STATE["model_id"] = a.model
-    if not a.fake:
-        from axis_framework.backend import suggest
-
-        _STATE["ea"] = suggest
-        if a.preload:
-            _vlm()
+    if a.preload and not a.fake:
+        _vlm()
     _STATE["ready"] = True
 
     serve(

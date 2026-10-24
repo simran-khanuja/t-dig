@@ -205,8 +205,6 @@ def rewrite(row, t2i_model, images):
     ]
     e["instruction_version"] = VERSION
     e["instruction_renderer"] = t2i_model
-    if images:
-        e["image_instruction_version"] = VERSION
     return row
 
 

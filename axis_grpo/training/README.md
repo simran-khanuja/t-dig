@@ -1,6 +1,6 @@
 # GRPO policy training
 
-This package trains a T-DIG policy with GRPO. The policy is Qwen3.5 (2B, 4B, 9B or 35B-A3B) with LoRA; it rewrites one base prompt and one axis request into `k = 4` expanded prompts (generation) or `k` edit instructions (editing). A frozen T2I model turns each expansion into an image, and the reward scores the set for diversity along the axis (TPIPS) and fidelity to the base prompt (VQAScore).
+This package trains a T-DIG policy with GRPO. The policy is Qwen3.5 (4B, 9B or 35B-A3B) with LoRA; it rewrites one base prompt and one axis request into `k = 4` expanded prompts (generation) or `k` edit instructions (editing). A frozen T2I model turns each expansion into an image, and the reward scores the set for diversity along the axis (TPIPS) and fidelity to the base prompt (VQAScore).
 
 | File | Purpose |
 | --- | --- |
@@ -67,7 +67,7 @@ The four expansions of a completion share one initial noise, seeded from the bas
 | `service` | `PY_REWARD` (`requirements/reward.txt`) | T2I model, TPIPS, reward math, cached per-request results |
 | `run` | `PY_TRAIN` (`requirements/train.txt`) | Qwen policy, LoRA, vLLM rollout, GRPO, checkpoints |
 
-The services bind to 127.0.0.1 by default and their JSON API is not authenticated. Rewards are cached by exact request and configuration. Weights come from `$HF_HUB_CACHE` (default `$HF_HOME/hub`) and `$T_DIG_MODELS`.
+The services bind to 127.0.0.1 by default and their JSON API is not authenticated. Rewards are cached by exact request and configuration. Weights come from `$HF_HUB_CACHE` (default `$HF_HOME/hub`) and `$T_DIG_MODELS`. The HPSv3 scorer reads `AXIS_HPSV3_BASE` (its Qwen2-VL base, default `Qwen/Qwen2-VL-7B-Instruct`) and `AXIS_HPSV3_CKPT` (a local `HPSv3.safetensors`, default: the `MizzenAI/HPSv3` file in the hub cache).
 
 ### Single run
 
@@ -89,7 +89,7 @@ The run refuses to resume from an incomplete latest checkpoint; `--resume-from
 
 ## Multi-node training matrix
 
-The default matrix is Qwen3.5-4B and 9B for each of the four T2I models: eight jobs of two 8-GPU nodes (`--sizes` adds `2B` or `35B-A3B`, `--nodes` changes the node count). Node zero gives two GPUs to the policy, five to the T2I model and TPIPS and one to VQAScore; each further node gives seven to the T2I model and TPIPS and one to VQAScore.
+The default matrix is Qwen3.5-4B and 9B for each of the four T2I models: eight jobs of two 8-GPU nodes (`--sizes` adds `35B-A3B`, `--nodes` changes the node count). Node zero gives two GPUs to the policy, five to the T2I model and TPIPS and one to VQAScore; each further node gives seven to the T2I model and TPIPS and one to VQAScore.
 
 - LoRA rank 32, alpha 64 on the attention, Gated DeltaNet and MLP projections (`--lora mixer` drops the MLP).
 - Training images are 512 px (SD3.5 16 steps, CFG 4.5; Klein 4 steps, CFG 1; Qwen-Image 16 steps, CFG 4); validation images are 1024 px (SD3.5 40 steps, Klein 4, Qwen-Image 50).
@@ -132,7 +132,7 @@ Each `job.sh` runs `scripts/training_fleet.sh` on node zero, which reads the hos
 - Slurm: both have defaults, `scontrol show hostnames "$SLURM_JOB_NODELIST"` and `srun --nodes=1 --ntasks=1 -w {host} --`.
 - Plain bash on two machines: write the host names to a file, node zero first, and run `bash <run>/job.sh` on node zero with `T_DIG_NODEFILE=<file>` and `T_DIG_REMOTE_LAUNCH='ssh {host} T_DIG_SETUP=<site setup file>'`. ssh does not pass the environment, so name the variables the other node needs after the host.
 
-The job id that ties the nodes of one run together is `T_DIG_JOB_ID`, else `SLURM_JOB_ID`, else `local-<pid>`.
+The job id that ties the nodes of one run together is `T_DIG_JOB_ID`, else `SLURM_JOB_ID`, else `local-<pid>`. `$T_DIG_RUNS/<run>` and the frozen source must be on a filesystem shared by all nodes: node zero reads each node's `ready.json` from the run directory, and the other nodes read the configurations and the stop marker from it.
 
 A job that outlives the scheduler's time limit is resubmitted and resumes from its last complete checkpoint. With `allow_endpoint_rebind: true` in the training configuration (default false), the resumed job may use other hosts as long as every reward slot's service hash matches.
 

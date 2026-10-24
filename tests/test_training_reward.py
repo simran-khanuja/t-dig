@@ -9,9 +9,12 @@ import urllib.error
 from unittest.mock import patch
 
 import numpy as np
+from hpdv2.storage import digest
 from axis_grpo.training.metrics import diversity, score
 from axis_grpo.training.protocol import (
     METRICS,
+    QUALITY_METRICS,
+    length_excess,
     malformed_metrics,
     malformed_score,
     parse_prompts,
@@ -19,6 +22,7 @@ from axis_grpo.training.protocol import (
     seed_for,
     validate_item,
     validate_metrics,
+    validate_reward,
 )
 from axis_grpo.training.reward_fn import compute_score, endpoint_for
 from axis_grpo.training.service import Batcher, RewardEngine, make_server
@@ -86,9 +90,6 @@ class RewardMathTests(unittest.TestCase):
 
     def test_length_term(self):
         """Hinge on words over the cap, capped per prompt; absent keys change nothing."""
-        from hpdv2.storage import digest
-        from axis_grpo.training.protocol import length_excess, validate_reward
-
         words = lambda n: ' '.join(['w'] * n)
         prompts = [
             words(60),
@@ -136,8 +137,6 @@ class RewardMathTests(unittest.TestCase):
 
     def test_edit_task_drift_term(self):
         """The drift hinge is per image, capped at 1, and needs its two reward keys."""
-        from axis_grpo.training.protocol import validate_reward
-
         config = dict(REWARD, drift_weight=1.0, drift_threshold=0.35)
         plain = score(np.eye(4), [0.9] * 4, 'material', REWARD)
         self.assertEqual((plain['drift_mean'], plain['drift_penalty']), (0.0, 0.0))
@@ -225,7 +224,6 @@ class ContractTests(unittest.TestCase):
             parse_spec(dict(SPEC, axis='overall'))
         with self.assertRaises(ValueError):
             validate_item(dict(item(), seed=True))
-        # The per-row fidelity threshold is the only optional ground-truth key.
         self.assertEqual(parse_spec(dict(SPEC, align_thresh=0.83))['align_thresh'], 0.83)
         self.assertEqual(validate_item(dict(item(), align_thresh=0.83))['align_thresh'], 0.83)
         for bad in (1.5, -0.1, True, '0.8', float('nan')):
@@ -298,10 +296,6 @@ class ContractTests(unittest.TestCase):
 
 class QualityTermTests(unittest.TestCase):
     def test_quality_hinge_charges_only_the_deficit_past_the_margin_and_keeps_old_schema(self):
-        import numpy as np
-        from axis_grpo.training.metrics import score
-        from axis_grpo.training.protocol import QUALITY_METRICS, malformed_metrics, malformed_score
-
         vectors = np.eye(4)
         alignment = [0.9] * 4
         plain = score(vectors, alignment, 'overall', REWARD)
@@ -327,10 +321,6 @@ class QualityTermTests(unittest.TestCase):
 
 class RowLengthCapTests(unittest.TestCase):
     def test_a_row_cap_replaces_the_configured_cap(self):
-        import numpy as np
-        from axis_grpo.training.metrics import score
-        from axis_grpo.training.protocol import parse_spec
-
         cfg = dict(REWARD, length_weight=0.1, length_cap=150)
         prompts = ['w ' * 40] * 4
         self.assertEqual(

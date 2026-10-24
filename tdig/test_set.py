@@ -6,7 +6,7 @@ request (`axis`) and its mode (`mode`, `generate` or `edit`). The paper's automa
 metrics use the `generate` items with their first axis, verbatim.
 
     python -m tdig.test_set --test <t-dig-test>/data/flux2-klein-9b/test.jsonl \
-        --val $T_DIG_DATA/tdig/<dataset>/flux2-klein-9b/val.parquet \
+        --val $T_DIG_DATA/tdig/<dataset>-customtau/flux2-klein-9b/val.parquet \
         --t2i-model flux2-klein-9b --out $T_DIG_DATA/tdig/testset-flux2-klein-9b
 
 Writes to `--out`:
@@ -21,7 +21,8 @@ Writes to `--out`:
 Axes are the participants' text, verbatim; TPIPS is conditioned on it for policy and baselines
 alike. `align_thresh` and `quality_thresh` enter only the validation reward, not the reported
 metrics (VQAScore, D_a, HPSv3 and ImageReward from `tdig.paper_metrics`). Both are set to their
-medians over the rows of `--val`, whose first row is also the row template.
+medians over the rows of `--val`, a `-customtau` dataset's `val.parquet` (every row carries
+`align_thresh`), whose first row is also the row template.
 """
 
 import argparse
@@ -31,6 +32,7 @@ import json
 import statistics
 from pathlib import Path
 
+from benchmarks.heldout import NAME
 from .recap_dataset import recap
 
 
@@ -43,7 +45,7 @@ def main():
         "--val",
         type=Path,
         required=True,
-        help="held-out val.parquet of a dataset for this T2I model",
+        help="val.parquet of a -customtau dataset for this T2I model",
     )
     p.add_argument(
         "--t2i-model",
@@ -101,7 +103,7 @@ def main():
             e.pop(k, None)
         r["extra_info"] = e
         spec = dict(
-            base_prompt=bp, axis=axis, tpips_factor=axis, k=4, align_thresh=align, length_cap=0
+            base_prompt=bp, axis=axis, tpips_factor=axis, k=4, align_thresh=align
         )
         if quality is not None:
             spec["quality_thresh"] = quality
@@ -127,7 +129,7 @@ def main():
         lines.append(
             json.dumps(
                 dict(
-                    id=f"pilot-axes:{pid}",
+                    id=f"{NAME}:{pid}",
                     index=i,
                     metadata=dict(
                         align_thresh={a.t2i_model: align},
@@ -146,7 +148,7 @@ def main():
         json.dumps(
             dict(
                 schema_version=1,
-                benchmark="heldout-axes",
+                benchmark=NAME,
                 count=len(lines),
                 rows_sha256=hashlib.sha256(raw).hexdigest(),
                 axes=len(rows),

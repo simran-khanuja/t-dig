@@ -36,18 +36,13 @@ def environment():
         "Pillow",
         "gurobipy",
         "safetensors",
-        "clean-fid",
         "scipy",
     ]:
         try:
             versions[name] = importlib.metadata.version(name)
         except importlib.metadata.PackageNotFoundError:
             versions[name] = None
-    return {
-        "python": platform.python_version(),
-        "packages": versions,
-        "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
-    }
+    return {"python": platform.python_version(), "packages": versions}
 
 
 def code_hash():
@@ -259,9 +254,9 @@ def generate(
             raise ValueError("Nonempty run lacks manifest")
         return inspect(run, rows, manifest)
 
-    records = check()
     count = lambda: sum(bool(v) for values in records.values() for v in values)
     if not execute:
+        records = check()
         return {
             "execute": False,
             "method": cfg["method"],
@@ -323,6 +318,7 @@ def generate(
 
                 factory = Backend
             backend = factory(verified, cfg, run)
+            status("running")
             for row in rows:
                 done = records[row["id"]]
                 if all(done):
@@ -332,7 +328,6 @@ def generate(
                     cfg["method"] == "group" and used + need > max_new_images
                 ):
                     break
-                status("running")
                 work = slots_path(run, row).parent
                 work.mkdir(parents=True, exist_ok=True)
                 adaptation_path = work / "adaptations.json"
@@ -416,7 +411,6 @@ def generate(
                         sync_directory(target.parent)
                         done[i] = record
                         used += 1
-                        status("running")
                 publish(run, row, records[row["id"]])
                 status("running")
             return status("complete" if count() == len(rows) * cfg["k"] else "budget_exhausted")

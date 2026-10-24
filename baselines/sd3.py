@@ -119,7 +119,6 @@ class SD35:
         import torch
         from diffusers.pipelines.stable_diffusion_3.pipeline_stable_diffusion_3 import (
             retrieve_timesteps,
-            calculate_shift,
         )
         from .features import Features
 
@@ -159,22 +158,7 @@ class SD35:
                     for s in seeds
                 ]
             )
-            scheduler_kwargs = {}
-            if p.scheduler.config.get("use_dynamic_shifting", False):
-                seq = (latent.shape[2] // p.transformer.config.patch_size) * (
-                    latent.shape[3] // p.transformer.config.patch_size
-                )
-                sc = p.scheduler.config
-                scheduler_kwargs["mu"] = calculate_shift(
-                    seq,
-                    sc.get("base_image_seq_len", 256),
-                    sc.get("max_image_seq_len", 4096),
-                    sc.get("base_shift", 0.5),
-                    sc.get("max_shift", 1.16),
-                )
-            timesteps, _ = retrieve_timesteps(
-                p.scheduler, c["steps"], p._execution_device, **scheduler_kwargs
-            )
+            timesteps, _ = retrieve_timesteps(p.scheduler, c["steps"], p._execution_device)
             for step, t in enumerate(timesteps):
                 predictions = []
                 cfg_active = step != 0 or g["first_step_cfg"]
@@ -203,7 +187,6 @@ class SD35:
                 velocity = torch.cat(predictions)
                 evaluations += len(candidate_ids)
                 x0 = clean_prediction(latent, velocity, p.scheduler.sigmas[step])
-                # One stateful scheduler call per step for the whole pool.
                 latent = p.scheduler.step(velocity, t, latent, return_dict=False)[0]
                 if len(candidate_ids) > c["k"]:
                     count = next_size(

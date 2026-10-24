@@ -192,7 +192,7 @@ def score_rows(rows, completions, cfg, endpoints, concurrency):
 def summarise(records):
     """Return counts and the mean of every metric over the completions that parsed."""
     valid = [r for r in records if not r["metrics"]["malformed"]]
-    names = sorted(k for k in records[0]["metrics"] if k not in ("request_id",))
+    names = sorted(records[0]["metrics"])
     words = [len(p.split()) for r in valid for p in parse_prompts(r["completion"], r["k"])]
     return dict(
         rows=len(records),

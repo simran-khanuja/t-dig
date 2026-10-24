@@ -54,6 +54,8 @@ def local_checkpoint(checkpoint, cache=None):
     p = Path(str(checkpoint)).expanduser()
     if p.is_dir():
         return p
+    if str(checkpoint).startswith(("/", ".", "~")):
+        raise ValueError(f"not found: {checkpoint}")
     repo, _, revision = str(checkpoint).partition("@")
     from huggingface_hub import snapshot_download
     from huggingface_hub.errors import LocalEntryNotFoundError
@@ -107,16 +109,11 @@ def inventory(path):
 def lock_assets(paths, out, provenance=None):
     if out.exists():
         raise ValueError("Asset lock exists; refusing overwrite")
-    data = {
-        "schema_version": 1,
-        "assets": {
-            k: dict(
-                inventory(expand_path(v)), path=contract_path(inventory(expand_path(v))["path"])
-            )
-            for k, v in paths.items()
-        },
-        "provenance": provenance or {},
-    }
+    assets = {}
+    for k, v in paths.items():
+        item = inventory(expand_path(v))
+        assets[k] = dict(item, path=contract_path(item["path"]))
+    data = {"schema_version": 1, "assets": assets, "provenance": provenance or {}}
     atomic_json(out, data)
     return data
 

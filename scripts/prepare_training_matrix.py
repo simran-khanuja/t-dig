@@ -25,13 +25,8 @@ from axis_grpo.dataset import export_parquet
 from axis_grpo.training.config import settings
 from axis_grpo.training.split import val_subset
 
-# Per-size trainer settings that differ from the defaults. Qwen3.5-35B-A3B holds 70 GB of
-# bfloat16 weights, so the rollout uses TP 2 (35 GB of FSDP shards, 35 GB of rollout weights and
-# the rollout cache per 141 GB GPU). The FSDP actor offloads parameters and optimizer state to
-# host memory: otherwise it keeps ~85 GB reserved per GPU while vLLM sleeps, and vLLM cannot
-# re-acquire its 50% share on wake-up after a checkpoint save. Its routed experts are fused
-# parameters, not linear modules, so the MLP LoRA targets reach the shared expert only; the
-# attention and linear-attention targets reach every layer.
+# Qwen3.5-35B-A3B (70 GB bf16) needs rollout TP 2 and an offloaded FSDP actor to fit beside vLLM.
+# Its routed experts are fused parameters, so the MLP LoRA targets reach the shared expert only.
 SIZE_SETTINGS = {'35B-A3B': dict(rollout_tp=2, actor_offload=True)}
 
 
@@ -130,7 +125,7 @@ def main():
         '--sizes',
         nargs='+',
         default=['4B', '9B'],
-        choices=['2B', '4B', '9B', '35B-A3B'],
+        choices=['4B', '9B', '35B-A3B'],
         help='Qwen3.5 policy sizes to prepare',
     )
     p.add_argument(
@@ -194,31 +189,24 @@ def main():
     cache = (a.hf_cache or Path(os.environ.get('HF_HUB_CACHE', hf_home / 'hub'))).resolve()
     models = (a.models or Path(os.environ.get('T_DIG_MODELS', root / 'models'))).resolve()
     dataset = a.dataset.resolve()
-    interpreter = lambda name: shutil.which(os.environ.get(name, 'python')) or os.environ.get(
-        name, 'python'
-    )
-    train_python = interpreter('PY_TRAIN')
+    python = {name: os.environ.get(name, 'python') for name in ('PY_TRAIN', 'PY_REWARD', 'PY_VQA')}
     import pyarrow.parquet as pq
 
     manifest = read_json(dataset / 'manifest.json')
     for name, expected in manifest['files'].items():
         if file_hash(dataset / name) != expected:
             raise ValueError(f'Dataset changed: {name}')
-    import json as _json
-
-    per_row_tau = sum(
-        'align_thresh' in _json.loads(r['reward_model']['ground_truth'])
+    specs = [
+        json.loads(r['reward_model']['ground_truth'])
         for r in pq.read_table(dataset / 'train.parquet', columns=['reward_model']).to_pylist()
-    )
-    if a.quality_weight:
-        rows_with_quality = sum(
-            'quality_thresh' in _json.loads(r['reward_model']['ground_truth'])
-            for r in pq.read_table(dataset / 'train.parquet', columns=['reward_model']).to_pylist()
+    ]
+    per_row_tau = sum('align_thresh' in s for s in specs)
+    if a.quality_weight and (
+        sum('quality_thresh' in s for s in specs) != per_row_tau or 'hpsv3' not in a.track_metrics
+    ):
+        raise ValueError(
+            '--quality-weight needs quality_thresh on every row and hpsv3 in --track-metrics'
         )
-        if rows_with_quality != per_row_tau or 'hpsv3' not in a.track_metrics:
-            raise ValueError(
-                '--quality-weight needs quality_thresh on every row and hpsv3 in --track-metrics'
-            )
     policy = {}
     for size in a.sizes:
         repo = cache / f'models--Qwen--Qwen3.5-{size}'
@@ -466,9 +454,9 @@ def main():
                 out=str(run),
                 source=str(out / 'source'),
                 cache=str(cache),
-                train_python=train_python,
-                reward_python=interpreter('PY_REWARD'),
-                vqa_python=interpreter('PY_VQA'),
+                train_python=python['PY_TRAIN'],
+                reward_python=python['PY_REWARD'],
+                vqa_python=python['PY_VQA'],
                 reward_config=str(run / 'reward-config.json'),
                 train_config=str(run / 'train-config.json'),
                 qualification_config=str(run / 'qualification-config.json'),
@@ -492,7 +480,7 @@ def main():
                 '#!/bin/bash\n'
                 f'# grpo-{short}-{size.lower()}: {a.nodes} nodes x 8 GPUs, one task per node, 72 h.\n'
                 f'export T_DIG_TRAIN_SOURCE={shlex.quote(str(out/"source"))}\n'
-                f'export T_DIG_TRAIN_PYTHON={shlex.quote(train_python)}\n'
+                f'export T_DIG_TRAIN_PYTHON={shlex.quote(python["PY_TRAIN"])}\n'
                 f'export T_DIG_FLEET_CONFIG={shlex.quote(str(run/"fleet-config.json"))}\n'
                 'exec /bin/bash "$T_DIG_TRAIN_SOURCE/scripts/training_fleet.sh"\n'
             )

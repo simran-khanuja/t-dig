@@ -74,9 +74,7 @@ async def compute_score(
     routes=None,
     reward=None,
     renderer='sd35-medium',
-    routing='fixed',
     seed=0,
-    seed_scope='base',
     timeout=1800,
     service_hashes=None,
     tracked=(),
@@ -94,11 +92,8 @@ async def compute_score(
         tracked = json.loads(tracked)
     validate_reward(reward)
     spec = parse_spec(ground_truth)
-    if routing != 'fixed':
-        raise ValueError('Each policy must use one fixed training T2I model')
     extra_info = extra_info or {}
-    selected = renderer
-    url = endpoint_for(routes, selected)
+    url = endpoint_for(routes, renderer)
     try:
         prompts = parse_prompts(solution_str, spec['k'])
     except ValueError:
@@ -107,11 +102,11 @@ async def compute_score(
         dict(
             **spec,
             prompts=prompts,
-            seed=seed_for(spec['base_prompt'], spec['tpips_factor'], seed, seed_scope),
+            seed=seed_for(spec['base_prompt'], spec['tpips_factor'], seed),
             split=extra_info.get('split', 'train'),
             row_id=extra_info.get('row_id', ''),
         )
     )
     return await asyncio.to_thread(
-        post, url, item, selected, reward, timeout, service_hashes, tracked
+        post, url, item, renderer, reward, timeout, service_hashes, tracked
     )

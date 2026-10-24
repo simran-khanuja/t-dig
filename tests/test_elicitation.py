@@ -9,7 +9,7 @@ from unittest.mock import patch
 from hpdv2.storage import atomic_json, digest, prompt_id
 from elicitation import policy
 from elicitation.api import Reply
-from elicitation.examples import inventory, load_bank, pick_examples
+from elicitation.examples import load_bank, pick_examples
 from elicitation.mixture import mix
 from elicitation.runner import run, build_request
 from elicitation.selection import assign, verified_images
@@ -269,48 +269,6 @@ class ElicitationTests(unittest.TestCase):
         path.write_bytes(b'corrupt')
         with self.assertRaises(ValueError):
             verified_images(assignment, row)
-
-    def test_pilot_b_allowlist_and_sim_exclusion(self):
-        human, study = self.root / 'human', self.root / 'study'
-        folder = human / 'responses_pilot_b'
-        folder.mkdir(parents=True)
-        (folder / 'not-approved.jsonl').write_text('DO NOT READ THIS')
-        study.mkdir()
-        (study / 'events.jsonl').write_text(
-            '\n'.join(
-                json.dumps(r)
-                for r in [
-                    dict(event='session_new', session_id='s', user_id='sim'),
-                    dict(event='expand', session_id='s', axis='test'),
-                ]
-            )
-            + '\n'
-        )
-        result = inventory(human, study)
-        self.assertEqual(result['examples'], [])
-        self.assertEqual(result['excluded']['study_author_exploration_sim'], 1)
-
-    def test_user_exclusion_and_preferred_treebeard_source(self):
-        human, study = self.root / 'human', self.root / 'study'
-        for folder in ('responses_pilot_b', 'responses_pilot_qwen'):
-            (human / folder).mkdir(parents=True)
-        study.mkdir()
-        (study / 'events.jsonl').write_text('')
-        row = dict(
-            prompt_id='tree',
-            prompt='A tree with a face.',
-            other_axes=['Make 1 look like Treebeard from LOTR!'],
-            want_variation=True,
-        )
-        raw = json.dumps(row) + '\n'
-        (human / 'responses_pilot_qwen' / 'participant05.jsonl').write_text(raw)
-        (human / 'responses_pilot_b' / 'participant01.jsonl').write_text(raw)
-        result = inventory(human, study)
-        self.assertEqual(result['excluded']['user_excluded_pilot_responses'], 1)
-        self.assertEqual(len(result['examples']), 1)
-        self.assertTrue(result['examples'][0]['user_preferred_source'])
-        self.assertFalse(result['examples'][0]['approved'])
-        self.assertEqual(result['examples'][0]['requests'], row['other_axes'])
 
     def test_mixture_keeps_reward_wording_independent(self):
         rows = [

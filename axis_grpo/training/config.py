@@ -80,7 +80,7 @@ def settings(value):
         if type(cfg[key]) is not int or cfg[key] < 1:
             raise ValueError(f'Invalid {key}')
     for key in ('save_freq_early', 'save_freq_early_until'):
-        if type(cfg.get(key, 0)) is not int or cfg.get(key, 0) < 0:
+        if type(cfg[key]) is not int or cfg[key] < 0:
             raise ValueError(f'Invalid {key}')
     for key in ('smoke', 'val_before_train', 'actor_offload', 'allow_endpoint_rebind'):
         if type(cfg[key]) is not bool:
@@ -157,8 +157,11 @@ def validate_service(cfg):
         'edit_strength',
         'editor_path',
     }
-    if not required <= set(cfg) or set(cfg) - required - optional:
-        raise ValueError(f'Missing/unknown reward service keys: {set(cfg)^required}')
+    missing, unknown = required - set(cfg), set(cfg) - required - optional
+    if missing or unknown:
+        raise ValueError(
+            f'Reward service keys: missing {sorted(missing)}, unknown {sorted(unknown)}'
+        )
     if 'val_render_batch' in cfg and (
         type(cfg['val_render_batch']) is not int or cfg['val_render_batch'] < 1
     ):
@@ -324,7 +327,6 @@ def compose_config(cfg, out, resume=False, stop_after_step=0):
             routes=json.dumps({cfg['renderer']: cfg['reward_endpoints']}),
             reward=json.dumps(cfg['reward']),
             renderer=cfg['renderer'],
-            routing='fixed',
             seed=cfg['render_seed'],
             timeout=cfg['reward_timeout'],
             tracked=json.dumps(cfg['track_metrics']),
@@ -334,8 +336,8 @@ def compose_config(cfg, out, resume=False, stop_after_step=0):
         'tdig': dict(
             stop_after_step=stop_after_step,
             max_steps=cfg['max_steps'],
-            save_freq_early=cfg.get('save_freq_early', 0),
-            save_freq_early_until=cfg.get('save_freq_early_until', 0),
+            save_freq_early=cfg['save_freq_early'],
+            save_freq_early_until=cfg['save_freq_early_until'],
         ),
     }
     for key, value in values.items():

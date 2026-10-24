@@ -213,18 +213,15 @@ class NativeT2IModel:
             return first
 
         def predict_call(pool, kwargs):
-            branches = 2 if self.is_sd3 else 1
-            if kwargs["hidden_states"].shape[0] != branches:
+            if kwargs["hidden_states"].shape[0] != 1:
                 raise ValueError("Native pool transformer contract changed")
-            outputs = []
-            for value in pool.split(1):
-                value = value.to(kwargs["hidden_states"].dtype)
-                if branches == 2:
-                    value = torch.cat([value, value])
-                outputs.append(original_forward(**{**kwargs, "hidden_states": value})[0])
-            if branches == 2:
-                return torch.cat([o[:1] for o in outputs] + [o[1:] for o in outputs])
-            return torch.cat(outputs)
+            dtype = kwargs["hidden_states"].dtype
+            return torch.cat(
+                [
+                    original_forward(**{**kwargs, "hidden_states": value.to(dtype)})[0]
+                    for value in pool.split(1)
+                ]
+            )
 
         def forward(*args, **kwargs):
             if args:
@@ -274,7 +271,6 @@ class NativeT2IModel:
                 (p.scheduler, "step", advance),
             ]
         ):
-            # Native output is only a placeholder; decode every final survivor below.
             p(**self.kwargs(row["prompt"], seeds[0]), output_type="latent")
             if step != c["steps"] or len(ids) != c["k"]:
                 raise ValueError("Native pool did not finish at K with the expected steps")

@@ -280,7 +280,7 @@ class EditDatasetTest(unittest.TestCase):
 class BaselineScoreTest(unittest.TestCase):
     def test_one_set_is_scored_once_per_axis(self):
         """A held-out set yields one line per axis, sharing its VQAScore; a COCO row yields one line."""
-        from tdig.score_baselines import merge as merge_baselines, _factors
+        from tdig.score_baselines import merge as merge_baselines
 
         with tempfile.TemporaryDirectory() as d:
             d = Path(d)
@@ -309,9 +309,16 @@ class BaselineScoreTest(unittest.TestCase):
                     prompt_id='coco2017:000000000001',
                     base_prompt='Q',
                     paths=[],
+                    factors=[
+                        dict(
+                            row_id='coco2017:000000000001',
+                            factor='overall',
+                            axis_kind='overall',
+                            contrastive=False,
+                        )
+                    ],
                 ),
             ]
-            self.assertEqual(_factors(sets[1])[0]['row_id'], 'coco2017:000000000001')
             (d / 'sets.jsonl').write_text(''.join(json.dumps(s) + '\n' for s in sets))
             vqa = [
                 dict(
@@ -338,10 +345,11 @@ class BaselineScoreTest(unittest.TestCase):
                 dict(
                     group=sets[1]['group'],
                     prompt_id='coco2017:000000000001',
+                    row_id='coco2017:000000000001',
                     normalized_vendi=0.3,
                     pairwise=0.1,
                 )
-            )  # no row_id
+            )
             (d / 'tpips-00.jsonl').write_text(''.join(json.dumps(v) + '\n' for v in tp))
             with self.assertRaises(ValueError):
                 merge_baselines(d, 1)

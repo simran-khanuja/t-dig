@@ -20,8 +20,6 @@ FRAMEWORK = os.path.join(REPO, "axis_framework")
 T_DIG_RUNS = os.environ.get("T_DIG_RUNS", os.path.join(REPO, "runs"))
 LEGACY_RUNS = os.environ.get("AXIS_FW_LEGACY_RUNS", os.path.join(T_DIG_RUNS, "axis_grpo"))
 
-if os.environ.get("AXIS_HF_HOME"):
-    os.environ.setdefault("HF_HOME", os.environ["AXIS_HF_HOME"])
 MODELS = os.environ.get("AXIS_MODELS", os.environ.get("T_DIG_MODELS", os.path.join(REPO, "models")))
 
 # Sessions, images and the event log, one directory per study run.
@@ -62,8 +60,6 @@ N_IID = int(os.environ.get("AXIS_FW_N_IID", "4"))
 # The policy base model, whether it sees images, its LoRA rank and context length are read from
 # the served runs (profiles.policy_base etc.). AXIS_FW_POLICY_BASE overrides, for serving an
 # untuned base with no runs.
-# Round-one LoRA checkpoints live under ckpt/$EXP. Point --lora at the experiment dir (latest
-# step is resolved) or at a specific global_step_N/actor/lora_adapter.
 SUGGEST_VLM = os.environ.get("AXIS_FW_SUGGEST_VLM", "Qwen/Qwen3-VL-8B-Instruct")
 
 # --------------------------------------------------------------------------- T2I models

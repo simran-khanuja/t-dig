@@ -263,7 +263,7 @@ def _fake_images(prompts, out_dir, tag, resolution, index_offset=0):
         d = ImageDraw.Draw(im)
         d.text(
             (10, 10),
-            "\n".join(p[j : j + 44] for j in range(0, min(len(p), 400), 44)),
+            "\n".join(p[s : s + 44] for s in range(0, min(len(p), 400), 44)),
             fill=(255, 255, 255),
         )
         d.text((resolution // 2 - 30, resolution // 2), "FAKE", fill=(255, 0, 0))
@@ -333,22 +333,22 @@ def route_render(p):
         raise HttpError(400, "no prompts")
     base_prompt = p.get("base_prompt") or prompts[0]
     model = p.get("model") or _STATE.get("loaded") or _STATE.get("default_model")
+    spec = _model_spec(model)
     # Unset render settings default to this model's served grid settings.
     grid = _settings(model, "grid")
     guidance_scale = float(p.get("guidance_scale", grid["guidance"]))
     init_diversity = float(p.get("init_diversity", config.INIT_DIVERSITY))
-
-    if not _STATE["fake"]:
-        spec = _model_spec(model)
-        # A family with unverified shared-latent packing would render wrong noise without
-        # an error, so refuse init_diversity < 1.0 for it.
-        if init_diversity < 1.0 and not spec["shared_latents"]:
-            raise HttpError(
-                400,
-                f"{model} ({spec['family']}) has no verified shared-latent packing, so "
-                f"init_diversity must be 1.0 (got {init_diversity}). See MODEL_FAMILIES "
-                f"in axis_framework/backend/render.py.",
-            )
+    if not 0.0 <= init_diversity <= 1.0:
+        raise HttpError(400, f"init_diversity must be in [0, 1] (got {init_diversity})")
+    # A family with unverified shared-latent packing would render wrong noise without an
+    # error, so refuse init_diversity < 1.0 for it.
+    if init_diversity < 1.0 and not spec["shared_latents"]:
+        raise HttpError(
+            400,
+            f"{model} ({spec['family']}) has no verified shared-latent packing, so "
+            f"init_diversity must be 1.0 (got {init_diversity}). See MODEL_FAMILIES "
+            f"in axis_framework/backend/render.py.",
+        )
     steps = int(p.get("steps", grid["steps"]))
     resolution = int(p.get("resolution", grid["resolution"]))
     # A caller may pin the seed (e.g. a re-render); otherwise use the training seed.
@@ -358,7 +358,7 @@ def route_render(p):
     os.makedirs(out_dir, exist_ok=True)
     tag = p.get("tag") or f"r{int(time.time())}"
 
-    # Sharding (orchestrator._render_pooled): `prompts` may be the slice
+    # Sharding (orchestrator._render_grid): `prompts` may be the slice
     # [index_offset, index_offset+len) of a grid of n_total. Filenames use the grid index,
     # so shards write tag_0..tag_{n-1} without collisions. Absent, the request is a whole grid.
     n_total = int(p.get("n_total") or len(prompts))
@@ -444,6 +444,7 @@ def route_edit(p):
     if missing:
         raise HttpError(400, f"source images not found: {missing[:2]}")
     model = p.get("model") or _STATE.get("loaded") or _STATE.get("default_model")
+    fam = _model_spec(model)["family"]
     ed = _settings(model, "edit")
     steps = int(p.get("steps", ed["steps"]))
     guidance = float(p.get("guidance_scale", ed["guidance"]))
@@ -463,7 +464,6 @@ def route_edit(p):
         paths = _fake_images(instructions, out_dir, tag, resolution, int(p.get("index_offset") or 0))
     else:
         rs = _STATE["rs"]
-        fam = _model_spec(model)["family"]
         if fam not in rs.EDIT_MODELS:
             raise HttpError(
                 400, f"{model} ({fam}) has no image editor; have " f"{sorted(rs.EDIT_MODELS)}"
@@ -620,6 +620,8 @@ def main():
         help="no GPU: placeholder images, for driving the loop end to end",
     )
     a = ap.parse_args()
+    if a.fake:
+        os.environ["AXIS_FW_FAKE"] = "1"
     a.model = a.model or config.default_model()
     _STATE["default_model"] = a.model
 

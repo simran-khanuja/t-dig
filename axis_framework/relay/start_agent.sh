@@ -8,6 +8,7 @@
 # (http://127.0.0.1:19100). The agent reconnects by itself. Log:
 # axis_framework/runs/relay_agent_<host>.log
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
+mkdir -p "$ROOT/axis_framework/runs"
 LOG=$ROOT/axis_framework/runs/relay_agent_$(hostname -s).log
 PIDF=$ROOT/axis_framework/runs/relay_agent_$(hostname -s).pid
 

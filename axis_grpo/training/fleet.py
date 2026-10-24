@@ -16,15 +16,15 @@ Three environment variables say how to reach the other nodes:
 
 import argparse
 import json
+import math
 import os
 from pathlib import Path
+import shlex
 import signal
 import socket
 import subprocess
 import time
 import urllib.request
-
-import shlex
 
 from hpdv2.storage import atomic_json, read_json, scheduler_job_id
 
@@ -57,7 +57,7 @@ def gpu_roles(node_index, visible):
     return dict(trainer=trainer, vqa=visible[len(trainer)], renderers=visible[len(trainer) + 1 :])
 
 
-def remote_command(cfg, config_path, session, index, host=''):
+def remote_command(cfg, config_path, session, index, host):
     launch = os.environ.get('T_DIG_REMOTE_LAUNCH')
     if not launch:
         if not os.environ.get('SLURM_JOB_ID'):
@@ -347,13 +347,13 @@ def main():
     root.mkdir(parents=True, exist_ok=True)
     status = root / 'status.json'
     children = Processes(root, cfg)
-    local = None
+    local, remotes = None, []
 
     def stop(signum, frame):
         raise SystemExit(f'Received signal {signum}')
 
-    signal.signal(signal.SIGTERM, stop)
-    signal.signal(signal.SIGINT, stop)
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, stop)
     try:
         nodes = cfg.get('nodes', 2)
         if a.node_index >= 1:
@@ -373,7 +373,7 @@ def main():
         # file. The launch command must stay in the foreground while the remote node runs.
         remotes = [
             children.start(
-                f'remote-node-{i}' if i > 1 else 'remote-node',
+                f'remote-node-{i}',
                 remote_command(cfg, a.config, session, i, hosts[i]),
             )
             for i in range(1, nodes)
@@ -391,8 +391,9 @@ def main():
             local.check()
             remotes_alive()
             for i, ready in list(pending.items()):
-                if ready.exists() and read_json(ready).get('session') == session:
-                    urls += read_json(ready)['endpoints']
+                value = read_json(ready) if ready.exists() else {}
+                if value.get('session') == session:
+                    urls += value['endpoints']
                     del pending[i]
             if time.monotonic() > deadline:
                 raise TimeoutError('Remote reward node startup timed out')
@@ -447,8 +448,6 @@ def main():
                 children.start('qualification-resume', command + ['--resume'], roles['trainer'])
             )
             steps = [read_json(f) for f in sorted((smoke_out / 'checkpoints/steps').glob('*.json'))]
-            import math
-
             norms = [s['metrics'].get('actor/grad_norm', float('nan')) for s in steps]
             if (
                 [i for s in steps for i in s['indices']] != [0, 1, 2]
@@ -504,6 +503,11 @@ def main():
     finally:
         if a.node_index == 0:
             atomic_json(root / 'fleet-stop.json', dict(session=session))
+            # Let the remote launchers see the stop file and close their services before
+            # their launch commands are killed.
+            deadline = time.monotonic() + 60
+            while any(r.poll() is None for r in remotes) and time.monotonic() < deadline:
+                time.sleep(2)
         if local:
             local.close()
         children.close()
