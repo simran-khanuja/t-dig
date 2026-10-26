@@ -3,6 +3,7 @@
 from pathlib import Path
 import json
 import math
+from baselines.config import T2I_MODELS
 from .protocol import QUALITY_SCORER, validate_reward, validate_tracked
 
 DEFAULTS = dict(
@@ -55,8 +56,8 @@ def settings(value):
         raise ValueError(f'Unknown training settings: {sorted(unknown)}')
     cfg = {**DEFAULTS, **value}
     validate_reward(cfg['reward'])
-    if cfg['renderer'] not in {'sd35-medium', 'sd35-large', 'flux2-klein-9b', 'qwen-image-2512'}:
-        raise ValueError('Unknown fixed reward T2I model')
+    if not isinstance(cfg['renderer'], str) or not cfg['renderer']:
+        raise ValueError('Name the fixed reward T2I model')
     for key in ('policy_path', 'train_file', 'val_file', 'cache'):
         if not cfg[key] or not Path(cfg[key]).exists():
             raise ValueError(f'Missing local {key}')
@@ -156,6 +157,7 @@ def validate_service(cfg):
         'dreamsim_cache',
         'edit_strength',
         'editor_path',
+        'pipeline',
     }
     missing, unknown = required - set(cfg), set(cfg) - required - optional
     if missing or unknown:
@@ -166,8 +168,17 @@ def validate_service(cfg):
         type(cfg['val_render_batch']) is not int or cfg['val_render_batch'] < 1
     ):
         raise ValueError('Invalid val_render_batch')
-    if cfg['renderer'] not in {'sd35-medium', 'sd35-large', 'flux2-klein-9b', 'qwen-image-2512'}:
-        raise ValueError('Unknown T2I model')
+    # A name outside T2I_MODELS is a custom Diffusers text-to-image model; `pipeline` names its
+    # pipeline class (default AutoPipelineForText2Image). Custom models generate only.
+    if not isinstance(cfg['renderer'], str) or not cfg['renderer']:
+        raise ValueError('Name the T2I model')
+    custom = cfg['renderer'] not in T2I_MODELS
+    if 'pipeline' in cfg and (
+        not custom or not isinstance(cfg['pipeline'], str) or not cfg['pipeline']
+    ):
+        raise ValueError('pipeline names the Diffusers pipeline class of a custom T2I model')
+    if custom and 'drift_weight' in cfg['reward']:
+        raise ValueError('Image editing is wired for the four paper T2I models only')
     if 'drift_weight' in cfg['reward'] and not Path(cfg.get('dreamsim_cache') or '').is_dir():
         raise ValueError(
             'A reward with a drift term needs a T2I model with an editor and a dreamsim_cache directory'

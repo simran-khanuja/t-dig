@@ -286,6 +286,12 @@ class ContractTests(unittest.TestCase):
             validate_service(bad)
         with self.assertRaises(ValueError):
             validate_service(dict(cfg, renderer='flux2-klein-9b'))
+        # Any other name is a custom Diffusers model; only such a model takes a pipeline class.
+        validate_service(dict(cfg, renderer='my-sdxl', pipeline='StableDiffusionXLPipeline'))
+        with self.assertRaises(ValueError):
+            validate_service(dict(cfg, pipeline='StableDiffusionXLPipeline'))
+        with self.assertRaises(ValueError):
+            validate_service(dict(cfg, renderer=''))
         # Tracked scorers are optional; the aesthetic scorer needs its head file.
         validate_service(dict(cfg, track_metrics=['imagereward', 'hpsv2', 'clip_score']))
         with self.assertRaises(ValueError):

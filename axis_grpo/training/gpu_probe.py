@@ -7,6 +7,7 @@ import time
 import numpy as np
 
 from hpdv2.storage import atomic_json, read_json
+from baselines.config import T2I_MODELS
 from .protocol import QUALITY_SCORER, seed_for
 
 
@@ -104,15 +105,20 @@ def probe(config, out):
         prompts=item['prompts'],
         **quality,
     )
-    # Identical prompts with the set's shared seed must give the same image, within 1 pixel level.
+    # Identical prompts with the set's shared seed must give the same image: within 1 pixel level
+    # for the four native pipelines. A custom Diffusers model in bfloat16 can differ by a few
+    # levels per pixel between batch positions (SD2.1's UNet does), so it passes on the mean,
+    # which different noise moves by tens of levels.
     duplicate = dict(item, prompts=[item['prompts'][0]] * 4)
     repeated = backend.render([duplicate])[0]
-    max_delta = max(
-        int(np.abs(np.asarray(im, dtype=np.int16) - np.asarray(repeated[0], dtype=np.int16)).max())
+    deltas = [
+        np.abs(np.asarray(im, dtype=np.int16) - np.asarray(repeated[0], dtype=np.int16))
         for im in repeated
-    )
-    if max_delta > 1:
-        raise RuntimeError(f'Shared-noise identity check failed: {max_delta}')
+    ]
+    max_delta = max(int(d.max()) for d in deltas)
+    mean_delta = max(float(d.mean()) for d in deltas)
+    if (max_delta > 1) if config['renderer'] in T2I_MODELS else (mean_delta > 16):
+        raise RuntimeError(f'Shared-noise identity check failed: {max_delta} ({mean_delta:.2f})')
     validation = []
     for batch in (1, 4):
         backend.config['val_render_batch'] = batch
@@ -150,6 +156,7 @@ def probe(config, out):
         validation_benchmark=validation,
         benchmark=measurements,
         shared_noise_max_pixel_difference=max_delta,
+        shared_noise_mean_pixel_difference=mean_delta,
         tpips_batch_max_abs_difference=delta,
         tpips_timings=[{k: v for k, v in e.items() if k != 'vectors'} for e in embeddings],
         alignment=alignment,

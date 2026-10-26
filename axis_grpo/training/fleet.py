@@ -2,7 +2,8 @@
 
 Every node has eight GPUs and one VQAScore process. Node zero gives two GPUs to the policy and
 five to reward services; each further node gives seven to reward services. Nothing starts
-without --execute.
+without --execute. `scripts/train_policy.py` serves one node with any number of GPUs
+(`single_node_roles`).
 
 Three environment variables say how to reach the other nodes:
   T_DIG_NODEFILE       file listing the hosts, one per line, node zero first (under Slurm,
@@ -55,6 +56,26 @@ def gpu_roles(node_index, visible):
         raise ValueError('Require a node role with eight distinct GPUs')
     trainer = visible[:2] if node_index == 0 else []
     return dict(trainer=trainer, vqa=visible[len(trainer)], renderers=visible[len(trainer) + 1 :])
+
+
+def single_node_roles(visible, train_gpus=None):
+    """Return the GPU roles of a one-machine run with any number of GPUs.
+
+    The policy takes `train_gpus` GPUs (default two of eight or more, else one), VQAScore the
+    next and the reward services the rest, one service per GPU. With two GPUs, VQAScore and one
+    reward service share the second; with one, every process shares it.
+    """
+    n = len(visible)
+    if n < 1 or len(set(visible)) != n:
+        raise ValueError('Require at least one GPU, each listed once')
+    train = train_gpus or (2 if n >= 8 else 1)
+    if n <= 2:
+        if train != 1:
+            raise ValueError('With one or two GPUs the policy trains on one GPU')
+        return dict(trainer=visible[:1], vqa=visible[-1], renderers=visible[-1:])
+    if not 1 <= train <= n - 2:
+        raise ValueError('Leave at least one GPU for VQAScore and one for a reward service')
+    return dict(trainer=visible[:train], vqa=visible[train], renderers=visible[train + 1 :])
 
 
 def remote_command(cfg, config_path, session, index, host):
@@ -158,19 +179,21 @@ class Processes:
             log.close()
 
 
-def serve_node(cfg, index, session):
+def serve_node(cfg, index, session, roles=None):
     """Start this node's services, qualify render batch sizes, and write their identities.
 
     Returns `(processes, roles, urls)`. Writes `status.json`, `selected-batching.json` and
-    `ready.json` in `<out>/node-<index>/`.
+    `ready.json` in `<out>/node-<index>/`. `roles` defaults to the eight-GPU layout of
+    `gpu_roles`.
     """
-    visible = os.environ.get('CUDA_VISIBLE_DEVICES', '').split(',')
-    if visible == ['']:
-        # The allocation holds the whole node; gpu_roles rejects fewer than eight GPUs.
-        visible = subprocess.check_output(
-            ['nvidia-smi', '--query-gpu=uuid', '--format=csv,noheader'], text=True
-        ).split()
-    roles = gpu_roles(index, visible)
+    if roles is None:
+        visible = os.environ.get('CUDA_VISIBLE_DEVICES', '').split(',')
+        if visible == ['']:
+            # The allocation holds the whole node; gpu_roles rejects fewer than eight GPUs.
+            visible = subprocess.check_output(
+                ['nvidia-smi', '--query-gpu=uuid', '--format=csv,noheader'], text=True
+            ).split()
+        roles = gpu_roles(index, visible)
     root = Path(cfg['out'])
     out = root / f'node-{index}'
     processes = Processes(out, cfg)

@@ -8,6 +8,64 @@ T-DIG makes a text-to-image (T2I) model produce a set of images that vary along 
 - Interactive test set: https://huggingface.co/datasets/neulab/t-dig-test
 - Policy training data: https://huggingface.co/datasets/neulab/t-dig-train
 
+## Train your own policy
+
+One command trains a T-DIG policy on one machine, with whatever GPUs it has, against one of the paper's four T2I models or any Diffusers text-to-image model you have. It downloads the weights and training data it is missing, starts the reward services, trains the policy with GRPO and writes a PEFT LoRA adapter you can load next to the Qwen3.5 base model. The paper's settings are the defaults.
+
+Set up the three Python environments once ([Setup](#setup)); then:
+
+```bash
+source scripts/env.sh
+# The paper's recipe for one of its T2I models (sd35-medium, sd35-large, flux2-klein-9b, qwen-image-2512).
+bash scripts/train_policy.sh --t2i-model sd35-medium --out $T_DIG_RUNS/my-policy            # prints the plan
+bash scripts/train_policy.sh --t2i-model sd35-medium --out $T_DIG_RUNS/my-policy --execute  # trains
+# Your own T2I model: any Diffusers text-to-image model directory, with its pipeline class and sampling settings.
+bash scripts/train_policy.sh --t2i-model /path/to/my-sdxl --pipeline StableDiffusionXLPipeline \
+  --steps 30 --guidance 5 --out $T_DIG_RUNS/my-sdxl-policy --execute
+```
+
+The adapter is written to `<out>/adapter/lora_adapter`; checkpoints are under `<out>/policy/checkpoints/`. A run that stops (time limit, crash) continues from its last checkpoint with the same command plus `--resume`. `--help` lists every option: policy size (`--policy 2B|4B|9B|35B-A3B`, default 4B), reward weights, batch and group size, step count (`--max-steps`, default 2000; 0 trains one epoch) and memory knobs.
+
+**GPUs.** The launcher uses the GPUs in `CUDA_VISIBLE_DEVICES`, else every GPU of the machine, and places the three processes by count:
+
+| GPUs | Policy (vLLM rollout + LoRA training) | VQAScore | T2I model + TPIPS reward services |
+| --- | --- | --- | --- |
+| 1 | GPU 0 | GPU 0 | GPU 0 |
+| 2 | GPU 0 | GPU 1 | GPU 1 |
+| 3 to 7 | GPU 0 | GPU 1 | one per remaining GPU |
+| 8 or more | GPUs 0 and 1 | GPU 2 | one per remaining GPU |
+
+Each reward service renders and scores the images of the completions sent to it, so a step's time is set by the images per step (`batch size × group size × 4`, 256 by default) divided over the reward GPUs. Peak GPU memory of each process, measured on an H200 with the defaults:
+
+| Process | Peak memory |
+| --- | --- |
+| Policy, Qwen3.5-4B with LoRA (FSDP actor) | 21 GB allocated, 27 GB reserved, plus vLLM's budget: half of the memory free when training starts (`--rollout-memory-fraction` sets it; the 4B weights take 8 GB of it) |
+| Reward service, SD3.5 Medium + TPIPS (8B) | 34 GB at 512 px; 37 GB rendering 1024 px validation images |
+| Reward service, a custom SD2.1-size model (sd-turbo) + TPIPS | 20 GB |
+| VQAScore, CLIP-FlanT5-XL | 8 to 11 GB |
+
+Processes that share a GPU add up. VQAScore is CLIP-FlanT5-XXL (about 22 GB) on a dedicated GPU of 40 GB or more, else the XL model (`--vqa-model`). The quality term of the reward (`--quality-weight 0.05`, the paper's value) adds the 17 GB HPSv3 scorer to every reward GPU and is off by default; `--token-batch` lowers the policy's activation memory. Throughput on an H200: one reward service renders 2.3 SD3.5 Medium images per second at 512 px (25 per second for sd-turbo), and sampling a step's completions from the 4B policy takes about 20 s, so the default step takes about two minutes per SD3.5 Medium reward GPU. The two-step runs that produced these numbers used one GPU (SD3.5 Medium) and two GPUs (sd-turbo), and are the launcher's tested configurations; the paper's 9B policies were trained on 2 × 8 H200s.
+
+**Data.** A paper T2I model trains on its rows of [neulab/t-dig-train](https://huggingface.co/datasets/neulab/t-dig-train): 76k (prompt, axis) rows with per-row fidelity thresholds measured on that model's own images. A custom model trains on the same rows without those thresholds, so `--tau` (default 0.9, about the median of the measured thresholds) is the fidelity threshold of every row. To measure thresholds for your model instead, see `tdig/render_iid.sh` in [tdig/README.md](tdig/README.md). `--dataset` points at any directory in that format.
+
+**Using the policy.** The adapter loads with vLLM or PEFT on the base model it was trained from; `tdig.instruction` writes the message the policy expects:
+
+```python
+from vllm import LLM, SamplingParams
+from vllm.lora.request import LoRARequest
+from tdig.instruction import instruction
+from axis_grpo.training.protocol import parse_prompts
+
+if __name__ == "__main__":   # vLLM starts its engine in a subprocess that re-imports this file
+    llm = LLM("<Qwen3.5-4B snapshot>", enable_lora=True, max_lora_rank=32, max_model_len=2048)
+    message = [{"role": "user", "content": instruction("a cozy reading nook with an armchair", "interior design style", 4, "sd35-medium", word_cap=32)}]
+    text = llm.get_tokenizer().apply_chat_template(message, tokenize=False, add_generation_prompt=True, enable_thinking=False)
+    out = llm.generate([text], SamplingParams(max_tokens=400, temperature=1.0), lora_request=LoRARequest("tdig", 1, "<out>/adapter/lora_adapter"))
+    print(parse_prompts(out[0].outputs[0].text, 4))   # four prompts, one per image
+```
+
+`axis_framework/` serves such an adapter behind the interactive tool ([step (e)](#e-run-the-interactive-framework-locally)).
+
 ## Repository layout
 
 | Path | Contents |
@@ -21,7 +79,7 @@ T-DIG makes a text-to-image (T2I) model produce a set of images that vary along 
 | `benchmarks/` | Benchmark prompt bundles (COCO 2017, held-out axes) and their source locks. |
 | `axis_framework/` | The interactive web tool (orchestrator, policy, T2I model and suggest servers, web page). |
 | `configs/` | Asset locks of the T2I and auxiliary models (`configs/t2i_models/`). |
-| `scripts/` | Shared launcher environment (`env.sh`), training-matrix and baseline-batch launchers, downloads. |
+| `scripts/` | Shared launcher environment (`env.sh`), the one-machine policy trainer (`train_policy.sh`), training-matrix and baseline-batch launchers, downloads. |
 | `requirements/` | Pinned packages of the three Python environments. |
 | `tests/` | CPU unit tests. |
 
@@ -113,7 +171,7 @@ To use other copies of the T2I models, write your own lock with `python -m basel
 
 ### Running on a cluster
 
-The launchers (`*.sh`) carry no scheduler directives; each states its resources in a comment. Run one with `bash` on a GPU machine, or submit it with Slurm and pass the variables through the job environment, for example `sbatch --export=ALL,VAL_OUT=... tdig/validate_checkpoints.sh`. A launcher uses the GPUs in `CUDA_VISIBLE_DEVICES` if set, else every GPU of the machine. The paper's experiments use nodes with eight H200 GPUs. Multi-node training also runs without a scheduler, over ssh; see [axis_grpo/training/README.md](axis_grpo/training/README.md).
+The launchers (`*.sh`) carry no scheduler directives; each states its resources in a comment. Run one with `bash` on a GPU machine, or submit it with Slurm and pass the variables through the job environment, for example `sbatch --export=ALL,VAL_OUT=... tdig/validate_checkpoints.sh`. A launcher uses the GPUs in `CUDA_VISIBLE_DEVICES` if set, else every GPU of the machine. The paper's experiments use nodes with eight H200 GPUs; nothing in the code needs them, and [Train your own policy](#train-your-own-policy) runs on one machine with any GPUs. Multi-node training also runs without a scheduler, over ssh; see [axis_grpo/training/README.md](axis_grpo/training/README.md).
 
 ## Steps
 
@@ -157,7 +215,7 @@ Run from the repository root after `source scripts/env.sh`.
 
 ### (b) Train a policy with GRPO
 
-One job per (T2I model, policy size); each job takes two 8-GPU nodes ([axis_grpo/training/README.md](axis_grpo/training/README.md)).
+The paper's matrix: one job per (T2I model, policy size), each on two 8-GPU nodes ([axis_grpo/training/README.md](axis_grpo/training/README.md)). On one machine, use [Train your own policy](#train-your-own-policy) instead.
 
 ```bash
 T_DIG_SUBMIT="sbatch --nodes=2 --ntasks-per-node=1 --gpus-per-node=8 --time=72:00:00" \

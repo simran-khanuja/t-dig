@@ -6,10 +6,52 @@ from pathlib import Path
 import tempfile
 import urllib.request
 
-from baselines.config import t2i_model_defaults
+from baselines.config import T2I_MODELS, t2i_model_defaults
 from baselines.assets import local_checkpoint, verify_assets
 from elicitation.tpips_compat import qwen_tokenizer_compat, verify_tokenizer
 from .config import validate_service
+
+
+class DiffusersT2IModel:
+    """Any Diffusers text-to-image model, as released, for a policy trained against a T2I model
+    outside the four of the paper. Render settings the pipeline does not accept are dropped."""
+
+    def __init__(self, assets, cfg, pipeline=None):
+        import inspect
+        import diffusers
+        import torch
+
+        self.cfg = cfg
+        cls = getattr(diffusers, pipeline or 'AutoPipelineForText2Image')
+        self.pipe = cls.from_pretrained(
+            assets['assets']['renderer']['path'], local_files_only=True, torch_dtype=torch.bfloat16
+        ).to(cfg['device'])
+        self.pipe.set_progress_bar_config(disable=True)
+        parameters = inspect.signature(self.pipe.__call__).parameters
+        self.accepted = (
+            None
+            if any(p.kind is p.VAR_KEYWORD for p in parameters.values())
+            else set(parameters)
+        )
+
+    def kwargs(self, prompt, seed):
+        import torch
+
+        c = self.cfg
+        result = dict(
+            prompt=prompt,
+            height=c['resolution'],
+            width=c['resolution'],
+            num_inference_steps=c['steps'],
+            guidance_scale=c['guidance'],
+            max_sequence_length=c['max_sequence_length'],
+            generator=torch.Generator('cpu').manual_seed(seed),
+        )
+        if c['negative_prompt']:
+            result['negative_prompt'] = c['negative_prompt']
+        if self.accepted is not None:
+            result = {k: v for k, v in result.items() if k in self.accepted}
+        return result
 
 
 class GPUBackend:
@@ -20,10 +62,16 @@ class GPUBackend:
 
         self.config = validate_service(config)
         assets = verify_assets(Path(config['renderer_assets']), ['renderer'])
-        cfg = t2i_model_defaults('iid', config['renderer'])
-        cfg.update(config['render']['train'], device=config['device'])
-        self.t2i_model = NativeT2IModel(assets, cfg)
-        self.t2i_model.pipe.vae.enable_slicing()
+        if config['renderer'] in T2I_MODELS:
+            cfg = t2i_model_defaults('iid', config['renderer'])
+            cfg.update(config['render']['train'], device=config['device'])
+            self.t2i_model = NativeT2IModel(assets, cfg)
+        else:
+            cfg = dict(config['render']['train'], device=config['device'])
+            self.t2i_model = DiffusersT2IModel(assets, cfg, config.get('pipeline'))
+        vae = getattr(self.t2i_model.pipe, 'vae', None)
+        if hasattr(vae, 'enable_slicing'):
+            vae.enable_slicing()
         tpips_checkpoint = local_checkpoint(config['tpips_checkpoint'], config['cache'])
         with qwen_tokenizer_compat():
             self.tpips = tpips.load_model(

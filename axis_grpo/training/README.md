@@ -69,6 +69,10 @@ The four expansions of a completion share one initial noise, seeded from the bas
 
 The services bind to 127.0.0.1 by default and their JSON API is not authenticated. Rewards are cached by exact request and configuration. Weights come from `$HF_HUB_CACHE` (default `$HF_HOME/hub`) and `$T_DIG_MODELS`. The HPSv3 scorer reads `AXIS_HPSV3_BASE` (its Qwen2-VL base, default `Qwen/Qwen2-VL-7B-Instruct`) and `AXIS_HPSV3_CKPT` (a local `HPSv3.safetensors`, default: the `MizzenAI/HPSv3` file in the hub cache).
 
+### One machine, any GPUs
+
+`scripts/train_policy.sh` runs the three processes on one machine with however many GPUs it has, against one of the four T2I models or any Diffusers text-to-image model, and merges the last checkpoint into a LoRA adapter; see the repository README, "Train your own policy". The matrix below is the paper's two-node layout.
+
 ### Single run
 
 `run.py` reads a JSON configuration with the keys checked in [config.py](config.py). The matrix preparation below writes `reward-config.json` and `train-config.json` for every run.

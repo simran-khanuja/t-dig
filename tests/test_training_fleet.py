@@ -4,7 +4,7 @@ import tempfile
 from pathlib import Path
 import unittest
 
-from axis_grpo.training.fleet import allocation_hosts, gpu_roles
+from axis_grpo.training.fleet import allocation_hosts, gpu_roles, single_node_roles
 from axis_grpo.training.split import split_rows, val_subset
 from axis_grpo.training.run import stable_identity
 from axis_grpo.training.order import PhaseBatchSampler
@@ -26,6 +26,20 @@ class FleetTests(unittest.TestCase):
             gpu_roles(1, ['0'] * 8)
         with self.assertRaises(ValueError):
             gpu_roles(0, ['0', '1'])
+
+    def test_single_node_roles_cover_every_gpu_count(self):
+        g = [f'GPU-{i}' for i in range(10)]
+        self.assertEqual(single_node_roles(g[:1]), dict(trainer=g[:1], vqa=g[0], renderers=g[:1]))
+        self.assertEqual(single_node_roles(g[:2]), dict(trainer=g[:1], vqa=g[1], renderers=g[1:2]))
+        self.assertEqual(single_node_roles(g[:3]), dict(trainer=g[:1], vqa=g[1], renderers=g[2:3]))
+        self.assertEqual(single_node_roles(g[:8]), dict(trainer=g[:2], vqa=g[2], renderers=g[3:8]))
+        self.assertEqual(
+            single_node_roles(g[:8], 1), dict(trainer=g[:1], vqa=g[1], renderers=g[2:8])
+        )
+        self.assertEqual(single_node_roles(g, 4), dict(trainer=g[:4], vqa=g[4], renderers=g[5:]))
+        for visible, train in (([], None), (g[:2], 2), (g[:3], 2), (g[:1] * 2, None)):
+            with self.assertRaises(ValueError):
+                single_node_roles(visible, train)
 
     def test_node_order_is_not_sorted(self):
         with tempfile.TemporaryDirectory() as tmp:
