@@ -18,7 +18,7 @@ source scripts/env.sh             # before every command below; see its header f
 ```
 Stable Diffusion 3.5 and FLUX.2 [klein] are gated on Hugging Face: accept their licenses and run `hf auth login` first.
 
-## Train your own policy 🚀
+## Train your own policy
 One command trains a policy on one machine with whatever GPUs it has, against one of the paper's T2I models or any Diffusers text-to-image model. It downloads the weights and training data it is missing, starts the reward services, trains with GRPO and writes a PEFT LoRA adapter to `<out>/adapter/lora_adapter`. The paper's settings are the defaults.
 ```bash
 # A paper T2I model: sd35-medium, sd35-large, flux2-klein-9b or qwen-image-2512.
