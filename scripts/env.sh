@@ -1,5 +1,5 @@
 # Shared environment of the launchers (sourced, not executed). Every variable can be set beforehand;
-# the defaults follow the repository layout. See README.md, "Environment variables".
+# the defaults follow the repository layout.
 #
 #   T_DIG_ROOT    repository root (default: the parent of this file's directory)
 #   T_DIG_DATA    datasets                      (default: $T_DIG_ROOT/data)
@@ -8,6 +8,8 @@
 #   HF_HOME       Hugging Face home; snapshots are read from $HF_HUB_CACHE (default: $HF_HOME/hub)
 #   PY_TRAIN, PY_REWARD, PY_VQA   interpreters of the three environments (default: python)
 #   T_DIG_SETUP   optional file sourced first, for site setup (module loads, LD_LIBRARY_PATH, CUDA)
+#   T_DIG_SUBMIT, T_DIG_NODEFILE, T_DIG_REMOTE_LAUNCH, T_DIG_JOB_ID
+#                 scheduler hooks of the multi-node training matrix (axis_grpo/training/README.md)
 if [ -n "${T_DIG_SETUP:-}" ]; then
   # shellcheck disable=SC1090
   source "$T_DIG_SETUP"

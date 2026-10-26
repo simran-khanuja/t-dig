@@ -7,7 +7,7 @@ name = "t-dig"
 version = "1.0.0"
 description = "T-DIG: Text-conditioned Diversity for Image Generation"
 readme = "README.md"
-license = {text = "Apache-2.0"}
+license = {text = "MIT"}
 requires-python = ">=3.10"
 # The core packages need only the standard library to import. Each stage runs in one of three
 # environments with its own pinned stack; install those from requirements/ (README, Setup).

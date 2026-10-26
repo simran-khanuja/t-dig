@@ -3,7 +3,7 @@
 Rendering, scoring and the policy prompt templates live in `axis_framework/backend/`.
 
 Site paths: T_DIG_MODELS (T2I model weights; AXIS_MODELS overrides) and HF_HOME, as in the
-rest of the repository (README, Environment variables).
+rest of the repository (scripts/env.sh).
 """
 
 import os
