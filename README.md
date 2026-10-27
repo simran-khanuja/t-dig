@@ -73,7 +73,7 @@ CHECKPOINTS=$T_DIG_MODELS/t-dig-checkpoints bash axis_framework/scripts/build_al
 SERVE=tdig_flux9b_alpha_gen:tdig_flux9b_edit_alpha bash axis_framework/scripts/launch_local.sh
 ```
 
-## Reproducing the paper
+## Paper experiments
 Each launcher (`*.sh`) states its resources in a comment and uses the GPUs in `CUDA_VISIBLE_DEVICES`, else all of them; run it with `bash` or submit it with your scheduler. The paper used nodes of eight H200s; nothing in the code needs them. Jobs read weights offline: download the T2I models at the locked revisions and the other weights first ([Weights](#weights)).
 
 **Training data** ([hpdv2](hpdv2/README.md), [iid](iid/README.md), [elicitation](elicitation/README.md), [axis_grpo](axis_grpo/README.md), [tdig](tdig/README.md)). The curated prompt pool and the finished rows are in [neulab/t-dig-train](https://huggingface.co/datasets/neulab/t-dig-train); to rebuild them, render four i.i.d. images per prompt with each T2I model, elicit axes, export and split the rows, then attach the fidelity and quality thresholds:
